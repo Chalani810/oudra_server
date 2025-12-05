@@ -1,3 +1,4 @@
+//path: oudra-server(same backend for web & mobile apps)/server.js
 const express = require("express");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
@@ -22,15 +23,17 @@ const productreportRoutes = require("./app/routes/productreportRoutes");
 const customerReportRoutes = require("./app/routes/customer_reportRoutes");
 const predictionRoutes = require('./app/routes/predictionRoutes');
 
+const treeRoutes = require('./app/routes/treeRoutes');
+const syncRoutes = require('./app/routes/syncRoutes');
+
 dotenv.config();
 const app = express();
 
 app.use(cors({
-  origin: "http://localhost:3000",
+  origin: ["http://localhost:3000", "http://localhost:8081"], // Web & Mobile
   credentials: true
 }));
 app.use(express.json());
-
 
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
@@ -45,7 +48,18 @@ app.get("/", (req, res) => {
   res.send("API is running...");
 });
 
+// Health check endpoint
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: 'Server is running',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
 app.use("/uploads", express.static(path.join(__dirname, "app/uploads")));
+
 app.use("/auth", authRoutes);
 app.use("/event", evenRoutes);
 app.use("/checkout", checkoutRoutes);
@@ -64,3 +78,10 @@ app.use("/order_report", order_reportRoutes);
 app.use("/product_report", productreportRoutes);
 app.use("/customer_report", customerReportRoutes);
 app.use("/predict", predictionRoutes);
+app.use('/api', treeRoutes);
+app.use('/api', syncRoutes); 
+
+// Optional catch-all for undefined routes
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
