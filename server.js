@@ -22,6 +22,8 @@ const productreportRoutes = require("./app/routes/productreportRoutes");
 const customerReportRoutes = require("./app/routes/customer_reportRoutes");
 const predictionRoutes = require('./app/routes/predictionRoutes');
 
+const resinRoutes = require("./app/routes/resinRoutes");
+
 dotenv.config();
 const app = express();
 
@@ -64,3 +66,5 @@ app.use("/order_report", order_reportRoutes);
 app.use("/product_report", productreportRoutes);
 app.use("/customer_report", customerReportRoutes);
 app.use("/predict", predictionRoutes);
+
+app.use("/resin", resinRoutes);
