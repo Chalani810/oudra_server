@@ -4,6 +4,7 @@ const dotenv = require("dotenv");
 const cors = require("cors");
 const path = require("path");
 
+// Existing routes
 const authRoutes = require("./app/routes/authRoutes");
 const evenRoutes = require("./app/routes/evenRoutes");
 const productRoutes = require("./app/routes/productRoutes");
@@ -22,30 +23,56 @@ const productreportRoutes = require("./app/routes/productreportRoutes");
 const customerReportRoutes = require("./app/routes/customer_reportRoutes");
 const predictionRoutes = require('./app/routes/predictionRoutes');
 
+// Blockchain routes
+const investorRoutes = require("./app/routes/investorRoutes");
+const blockchainRoutes = require("./app/routes/blockchainRoutes");
+
+// Load environment variables
 dotenv.config();
+
 const app = express();
 
+// Middleware
 app.use(cors({
   origin: "http://localhost:3000",
   credentials: true
 }));
 app.use(express.json());
-
+app.use(express.urlencoded({ extended: true }));
 
 // MongoDB connection
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB Connected"))
-  .catch(err => console.log("MongoDB Connection Error:", err));
-
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/blockchain-investors';
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
 
-// Routes
+mongoose.connect(MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+  .then(() => {
+    console.log("✅ MongoDB Connected Successfully");
+    console.log(`📁 Database: ${mongoose.connection.name}`);
+  })
+  .catch(err => {
+    console.error("❌ MongoDB Connection Error:", err.message);
+    process.exit(1);
+  });
+
+// Root route
 app.get("/", (req, res) => {
-  res.send("API is running...");
+  res.json({ 
+    message: "API is running...",
+    endpoints: {
+      investors: "/api/investors",
+      blockchain: "/api/blockchain/chain",
+      verify: "/api/blockchain/verify"
+    }
+  });
 });
 
+// Static files
 app.use("/uploads", express.static(path.join(__dirname, "app/uploads")));
+
+// Existing routes
 app.use("/auth", authRoutes);
 app.use("/event", evenRoutes);
 app.use("/checkout", checkoutRoutes);
@@ -64,3 +91,51 @@ app.use("/order_report", order_reportRoutes);
 app.use("/product_report", productreportRoutes);
 app.use("/customer_report", customerReportRoutes);
 app.use("/predict", predictionRoutes);
+
+// Blockchain routes - IMPORTANT: These must be defined
+app.use("/api/investors", investorRoutes);
+app.use("/api/blockchain", blockchainRoutes);
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ 
+    success: false, 
+    error: `Route ${req.url} not found` 
+  });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('❌ Error:', err.stack);
+  res.status(err.status || 500).json({ 
+    success: false, 
+    error: err.message || 'Something went wrong!',
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`\n🚀 Server running on http://localhost:${PORT}`);
+  console.log(`\n📊 Blockchain API Endpoints:`);
+  console.log(`   GET    http://localhost:${PORT}/api/investors`);
+  console.log(`   POST   http://localhost:${PORT}/api/investors`);
+  console.log(`   GET    http://localhost:${PORT}/api/investors/:id`);
+  console.log(`   PUT    http://localhost:${PORT}/api/investors/:id`);
+  console.log(`   DELETE http://localhost:${PORT}/api/investors/:id`);
+  console.log(`   GET    http://localhost:${PORT}/api/blockchain/chain`);
+  console.log(`   GET    http://localhost:${PORT}/api/blockchain/verify`);
+  console.log(`   GET    http://localhost:${PORT}/api/blockchain/audit/:investorId`);
+  console.log(`   GET    http://localhost:${PORT}/api/blockchain/block/:index\n`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('👋 SIGTERM signal received: closing HTTP server');
+  mongoose.connection.close(false, () => {
+    console.log('MongoDB connection closed');
+    process.exit(0);
+  });
+});
+
+module.exports = app;
