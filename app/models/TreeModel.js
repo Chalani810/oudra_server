@@ -1,4 +1,3 @@
-// app/models/TreeModel.js :
 
 const mongoose = require('mongoose');
 
@@ -11,9 +10,7 @@ const TreeSchema = new mongoose.Schema({
   treeId: { type: String, unique: true, index: true },
   nfcTagId: { type: String, default: null, index: true },
   plantedDate: { type: Date, default: null },
-  
-  // age can be calculated in the client-side or via a utility; optional stored number:
-  age: { type: Number, default: null }, 
+  age: { type: Number, default: null },
   investorId: { type: String, default: null },
   investorName: { type: String, default: null },
   block: { type: String, default: null },
@@ -29,6 +26,7 @@ const TreeSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
 
   // Lifecycle fields
+  offlineUpdated: { type: Boolean, default: false },
   lifecycleStatus: {
     type: String,
     enum: [
@@ -37,12 +35,13 @@ const TreeSchema = new mongoose.Schema({
     ],
     default: 'Growing'
   },
-  inoculationCount: { type: Number, default: 0 }, // 0,1,2
+  inoculationCount: { type: Number, default: 0 },
   readyForInoculation: { type: Boolean, default: false },
-  readyForHarvest: { type: Boolean, default: false }
+  readyForHarvest: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 });
 
-// update timestamps
 TreeSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
