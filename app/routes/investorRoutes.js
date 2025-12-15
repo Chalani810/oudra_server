@@ -1,24 +1,17 @@
-// routes/investorRoutes.js
 const express = require('express');
-const {
-  createInvestor,
-  getAllInvestors,
-  getInvestorById,
-  updateInvestor,
-  deleteInvestor,
-  getInvestorWithAuditTrail // Add this
-} = require('../controllers/investorController');
-
 const router = express.Router();
+const investorController = require('../controllers/investorController');
 
-// CRUD routes
-router.post('/', createInvestor);
-router.get('/', getAllInvestors);
-router.get('/:id', getInvestorById);
-router.put('/:id', updateInvestor);
-router.delete('/:id', deleteInvestor);
+// Investor routes
+router.post('/', investorController.createInvestor);
+router.get('/', investorController.getAllInvestors);
+router.get('/:id', investorController.getInvestorById);
+router.put('/:id', investorController.updateInvestor);
+router.delete('/:id', investorController.deleteInvestor);
 
-// Enhanced routes
-router.get('/:id/audit-trail', getInvestorWithAuditTrail); // Add this
+// NEW: Certificate-related routes
+router.get('/:id/certificate', investorController.getInvestorWithCertificate);
+router.get('/certificate/verify/:certificateId', investorController.verifyInvestorCertificate);
+router.get('/:id/audit', investorController.getInvestorWithAuditTrail);
 
 module.exports = router;
