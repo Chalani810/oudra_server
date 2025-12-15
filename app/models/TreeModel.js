@@ -1,3 +1,4 @@
+//path:oudra-server(common backend)/app/models/TreeModel.js
 const mongoose = require('mongoose');
 
 const GpsSchema = new mongoose.Schema({
