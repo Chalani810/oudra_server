@@ -1,4 +1,4 @@
-//path:oudra-server/app/controllers/treeController.js
+//path:oudra-server(same backend for web & mobile apps)/app/controllers/treeController.js
 const Tree = require('../models/TreeModel');
 const AutoIncrementTreeIdCount = require('../models/AutoIncrementTreeIdCount');
 const Observation = require('../models/Observations');
@@ -308,7 +308,8 @@ exports.getTreeById = async (req, res) => {
     const ageData = calculateTreeAge(tree.plantedDate);
     const treeWithAge = {
       ...tree,
-      calculatedAge: ageData
+      calculatedAge: ageData,
+      calculatedLifecycleStatus: determineLifecycleStatus(tree) // Add calculated status
     };
     
     return res.json(treeWithAge);
@@ -453,14 +454,113 @@ exports.updateTreeProfile = async (req, res) => {
   }
 };
 
-// Mobile app endpoint for field worker updates - NEW FUNCTION
+// ========== CRITICAL ENDPOINT: MOBILE TREE PROFILE UPDATE ==========
+// This is the endpoint field workers will use to update health status and inoculation count
+exports.mobileUpdateTreeProfile = async (req, res) => {
+  try {
+    const { treeId } = req.params;
+    const { 
+      healthStatus, 
+      inoculationCount,
+      block,
+      lastUpdatedBy 
+    } = req.body;
+
+    const tree = await Tree.findOne({ treeId }).exec();
+    if (!tree) return res.status(404).json({ message: 'Tree not found' });
+
+    // Check if tree is dead or harvested - cannot update
+    if (tree.healthStatus === 'Dead' || tree.lifecycleStatus === 'Harvested') {
+      return res.status(400).json({ 
+        message: tree.healthStatus === 'Dead' 
+          ? 'Cannot update a dead tree. Lifecycle has stopped permanently.'
+          : 'Cannot update a harvested tree. Record is preserved for tracking.',
+        currentStatus: tree.healthStatus === 'Dead' ? 'Dead' : 'Harvested'
+      });
+    }
+
+    // Prepare updates - field workers can update these
+    const updates = {
+      lastUpdatedBy: lastUpdatedBy || 'field-worker',
+      lastUpdatedAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    // Update allowed fields if provided
+    if (healthStatus !== undefined) updates.healthStatus = healthStatus;
+    if (inoculationCount !== undefined) updates.inoculationCount = parseInt(inoculationCount);
+    if (block !== undefined) updates.block = block;
+
+    // Auto-calculate lifecycle status based on new data
+    const newTreeData = { ...tree.toObject(), ...updates };
+    const calculatedLifecycle = determineLifecycleStatus(newTreeData);
+    updates.lifecycleStatus = calculatedLifecycle;
+
+    // Update flags based on lifecycle
+    const age = calculateTreeAge(tree.plantedDate);
+    const newInoculationCount = inoculationCount !== undefined ? parseInt(inoculationCount) : tree.inoculationCount;
+    const newHealthStatus = healthStatus || tree.healthStatus;
+    
+    // Set readyForInoculation flag
+    if (newInoculationCount === 0 && age.years >= 4 && newHealthStatus === 'Healthy') {
+      updates.readyForInoculation = true;
+    } else if (newInoculationCount === 1 && age.totalMonths >= 52 && newHealthStatus === 'Healthy') {
+      updates.readyForInoculation = true;
+    } else {
+      updates.readyForInoculation = false;
+    }
+
+    // Set readyForHarvest flag
+    if (newInoculationCount === 2 && age.years >= 8 && newHealthStatus === 'Healthy') {
+      updates.readyForHarvest = true;
+    } else {
+      updates.readyForHarvest = false;
+    }
+
+    // Update the tree
+    Object.assign(tree, updates);
+    await tree.save();
+
+    // Add to history
+    const history = new TreeHistory({
+      treeId,
+      actionType: 'ManualEdit',
+      oldValue: {
+        healthStatus: tree.healthStatus,
+        inoculationCount: tree.inoculationCount,
+        lifecycleStatus: tree.lifecycleStatus,
+        block: tree.block
+      },
+      newValue: updates,
+      changedBy: lastUpdatedBy || 'field-worker',
+      notes: 'Tree profile updated via mobile app',
+      timestamp: new Date(),
+      device: 'mobile'
+    });
+    await history.save();
+    
+    // Return tree with calculated fields
+    const responseTree = {
+      ...tree.toObject(),
+      calculatedLifecycleStatus: calculatedLifecycle,
+      calculatedAge: calculateTreeAge(tree.plantedDate)
+    };
+    
+    return res.json(responseTree);
+  } catch (err) {
+    console.error('mobileUpdateTreeProfile error:', err);
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// Mobile app endpoint for field worker updates - ALL IN ONE
 exports.mobileUpdateTree = async (req, res) => {
   try {
     const { treeId } = req.params;
     const { 
       nfcTagId,
       healthStatus, 
-      lifecycleStatus, 
+      lifecycleStatus, // This should come from auto-calculation, not from mobile
       inoculationCount,
       gps,
       observedBy,
@@ -483,11 +583,10 @@ exports.mobileUpdateTree = async (req, res) => {
     }
     
     if (healthStatus) updates.healthStatus = healthStatus;
-    if (lifecycleStatus) updates.lifecycleStatus = lifecycleStatus;
     if (inoculationCount !== undefined) updates.inoculationCount = inoculationCount;
     if (gps) updates.gps = gps;
 
-    // Apply auto lifecycle logic
+    // Apply auto lifecycle logic - CRITICAL: Override any mobile-sent lifecycleStatus
     const lifecycleUpdates = autoUpdateLifecycleStatus(tree.toObject(), updates);
     Object.assign(updates, lifecycleUpdates);
 
@@ -889,7 +988,7 @@ exports.getTreeStatusSummary = async (req, res) => {
   }
 };
 
-// FIELD NOTES / OBSERVATIONS
+// ========== FIELD NOTES / OBSERVATIONS ==========
 exports.getTreeObservations = async (req, res) => {
   try {
     const observations = await Observation.find({ treeId: req.params.treeId })
@@ -1042,7 +1141,7 @@ exports.deleteObservation = async (req, res) => {
   }
 };
 
-// TREE HISTORY
+// ========== TREE HISTORY ==========
 exports.getTreeHistory = async (req, res) => {
   try {
     const history = await TreeHistory.find({ treeId: req.params.treeId })
