@@ -1,3 +1,4 @@
+//path:oudra-server/app/models/Employee.js
 const mongoose = require("mongoose");
 
 const employeeSchema = new mongoose.Schema(
@@ -28,16 +29,10 @@ const employeeSchema = new mongoose.Schema(
       type: String,
       required: false,
     },
-    availability: {
+    isActive: {
       type: Boolean,
       default: true,
-    },
-    occupation: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Role", 
-      required: true,
-      trim: true,
-    },
+    }
   },
   {
     timestamps: true,

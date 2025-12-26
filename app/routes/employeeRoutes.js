@@ -1,3 +1,4 @@
+//path:oudra-server/app/routes/employeeRoutes.js
 const express = require("express");
 const multer = require("multer");
 const {
