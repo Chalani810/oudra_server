@@ -31,6 +31,9 @@ const syncRoutes = require('./app/routes/syncRoutes');
 const investorRoutes = require("./app/routes/investorRoutes");
 const blockchainRoutes = require("./app/routes/blockchainRoutes");
 
+//Task Management routes
+const taskRoutes = require("./app/routes/taskRoutes");
+
 // Load environment variables
 dotenv.config();
 
@@ -38,7 +41,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: "*", // Allow ALL origins during development
+  origin: "*", // Allowing ALL origins during development
   credentials: true
 }));
 app.use(express.json());
@@ -83,7 +86,37 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Adding a debug endpoint
+app.get("/api/debug", (req, res) => {
+  res.json({
+    message: "Debug endpoint",
+    routes: {
+      trees: "/api/trees",
+      tasks: "/api/tasks (should exist)",
+      employees: "/employee (should exist)",
+      api_tasks: "Mounted at /api/tasks?",
+      tasks_direct: "Mounted at /tasks?"
+    }
+  });
+});
+
+app.get("/debug", (req, res) => {
+  res.json({
+    message: "Root debug endpoint",
+    currentTaskRoute: "Check if /tasks exists"
+  });
+});
+
+// Adding request logging middleware
+app.use((req, res, next) => {
+  console.log(`📨 ${new Date().toISOString()} ${req.method} ${req.url}`);
+  next();
+});
+
+// Static files
 app.use("/uploads", express.static(path.join(__dirname, "app/uploads")));
+
+// ===== ALL ROUTES ARE DEFINED HERE =====
 
 app.use("/auth", authRoutes);
 app.use("/event", evenRoutes);
@@ -91,7 +124,6 @@ app.use("/checkout", checkoutRoutes);
 app.use("/cart", cartRoutes);
 app.use("/api", productRoutes);
 app.use("/invoice", invoiceRoutes);
-app.use("/employee", employeeRoutes);
 app.use("/contact", contactusRoutes);
 app.use("/role", roleRoutes);
 app.use("/salary", salaryRoutes);
@@ -103,19 +135,20 @@ app.use("/order_report", order_reportRoutes);
 app.use("/product_report", productreportRoutes);
 app.use("/customer_report", customerReportRoutes);
 app.use("/predict", predictionRoutes);
+
+// Oudra project routes
+app.use("/employee", employeeRoutes);
 app.use('/api', treeRoutes);
-app.use('/api', syncRoutes); 
+app.use('/api', syncRoutes);
 
-// Optional catch-all for undefined routes
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
-});
-
-// Blockchain routes - IMPORTANT: These must be defined
+// Blockchain routes
 app.use("/api/investors", investorRoutes);
 app.use("/api/blockchain", blockchainRoutes);
 
-// 404 handler
+// Task routes
+app.use("/api/tasks", taskRoutes);
+
+// ===== 404 HANDLER - MUST BE AFTER ALL ROUTES =====
 app.use((req, res) => {
   res.status(404).json({ 
     success: false, 
@@ -123,7 +156,7 @@ app.use((req, res) => {
   });
 });
 
-// Global error handler
+// ===== GLOBAL ERROR HANDLER - MUST BE LAST =====
 app.use((err, req, res, next) => {
   console.error('❌ Error:', err.stack);
   res.status(err.status || 500).json({ 
@@ -145,7 +178,13 @@ app.listen(PORT, () => {
   console.log(`   GET    http://localhost:${PORT}/api/blockchain/chain`);
   console.log(`   GET    http://localhost:${PORT}/api/blockchain/verify`);
   console.log(`   GET    http://localhost:${PORT}/api/blockchain/audit/:investorId`);
-  console.log(`   GET    http://localhost:${PORT}/api/blockchain/block/:index\n`);
+  console.log(`   GET    http://localhost:${PORT}/api/blockchain/block/:index`);
+  console.log(`\n🌳 Oudra API Endpoints:`);
+  console.log(`   GET    http://localhost:${PORT}/api/trees`);
+  console.log(`   POST   http://localhost:${PORT}/api/trees`);
+  console.log(`   GET    http://localhost:${PORT}/api/tasks`);
+  console.log(`   POST   http://localhost:${PORT}/api/tasks`);
+  console.log(`   GET    http://localhost:${PORT}/employee`);
 });
 
 // Graceful shutdown
