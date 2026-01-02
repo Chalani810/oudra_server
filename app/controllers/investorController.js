@@ -1,385 +1,694 @@
-// controllers/investorController.js
+// path: app/controllers/investorController.js
 const Investor = require('../models/Investor');
-const Blockchain = require('../blockchain/Blockchain');
-const NotificationService = require('../services/notificationService'); // Add this
+const Tree = require('../models/TreeModel');
+const mongoose = require('mongoose');
 
-const blockchain = new Blockchain();
+// ========================================
+// INVESTOR CRUD OPERATIONS
+// ========================================
 
-// Initialize blockchain on startup
-(async () => {
-  await blockchain.initialize();
-})();
-
-const createInvestor = async (req, res) => {
+exports.getAllInvestors = async (req, res) => {
   try {
-    const { name, email, investment, phone } = req.body;
+    console.log('📡 GET /api/investors - Fetching all investors...');
     
-    // Get user info (from auth middleware if you have it)
-    const modifiedBy = {
-      id: req.user?._id || null,
-      name: req.user?.name || 'System Admin',
-      role: req.user?.role || 'ADMIN',
-      email: req.user?.email || 'admin@system.com'
-    };
+    const investors = await Investor.find({ isDeleted: false })
+      .populate({
+        path: 'investedTrees.tree',
+        select: 'treeId nfcTagId block healthStatus lifecycleStatus plantedDate inoculationCount gps'
+      })
+      .sort({ createdAt: -1 });
+
+    console.log(`✅ Found ${investors.length} investors`);
+
+    // Format response to match frontend expectations
+    const formattedInvestors = investors.map(investor => ({
+      _id: investor._id,
+      investorId: investor.investorId,
+      name: investor.name,
+      email: investor.email,
+      phone: investor.phone,
+      investment: investor.investment.totalInvestment,
+      status: investor.status,
+      investedTrees: investor.investedTrees,
+      treeCount: investor.activeTreeCount,
+      certificateCount: investor.activeCertificateCount,
+      createdAt: investor.createdAt,
+      updatedAt: investor.updatedAt
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: formattedInvestors.length,
+      data: formattedInvestors,
+      investors: formattedInvestors // ALSO INCLUDE AS 'investors' FOR COMPATIBILITY
+    });
+  } catch (error) {
+    console.error('❌ Error fetching investors:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch investors',
+      error: error.message
+    });
+  }
+};
+/**
+ * Get single investor by ID
+ */
+exports.getInvestorById = async (req, res) => {
+  try {
+    const { id } = req.params;
     
-    const investor = await Investor.create({
+    console.log(`📡 GET /api/investors/${id}`);
+
+    const investor = await Investor.findById(id)
+      .populate({
+        path: 'investedTrees.tree',
+        select: 'treeId nfcTagId block healthStatus lifecycleStatus plantedDate inoculationCount gps harvestData'
+      });
+
+    if (!investor || investor.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: 'Investor not found'
+      });
+    }
+
+    console.log(`✅ Found investor: ${investor.name}`);
+
+    res.status(200).json({
+      success: true,
+      data: investor
+    });
+  } catch (error) {
+    console.error('❌ Error fetching investor:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch investor',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Create new investor with optional tree assignment
+ */
+exports.createInvestor = async (req, res) => {
+  try {
+    const { 
+      name, 
+      email, 
+      phone, 
+      investment, 
+      status,
+      selectedTreeIds // Array of tree IDs to assign
+    } = req.body;
+
+    console.log('📡 POST /api/investors - Creating new investor...');
+    console.log('Data:', { name, email, phone, investment, selectedTreeIds });
+
+    // Validation
+    if (!name || !email || !phone || !investment) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: name, email, phone, investment'
+      });
+    }
+
+    // Check if email already exists
+    const existingInvestor = await Investor.findOne({ email, isDeleted: false });
+    if (existingInvestor) {
+      return res.status(400).json({
+        success: false,
+        message: 'An investor with this email already exists'
+      });
+    }
+
+    // Create investor object
+    const investorData = {
       name,
       email,
-      investment: parseFloat(investment),
       phone,
-      createdBy: modifiedBy.id
-    });
-
-    console.log(`✅ Investor created: ${investor._id}`);
-
-    // Create block data with proper structure
-    const blockData = {
-      investorId: investor._id.toString(),
-      action: 'CREATE',
-      data: {
-        name: investor.name,
-        email: investor.email,
-        investment: investor.investment,
-        phone: investor.phone
-      },
-      modifiedBy: modifiedBy.name
+      status: status || 'active',
+      investment: {
+        totalInvestment: parseFloat(investment),
+        availableBalance: parseFloat(investment),
+        investedAmount: 0
+      }
     };
 
-    const block = await blockchain.addBlock(blockData);
+    // Create the investor
+    const newInvestor = new Investor(investorData);
+    await newInvestor.save();
 
-    // Update investor with blockchain hash
-    investor.blockchainHash = block.hash;
-    investor.blockchainBlockIndex = block.index;
-    investor.lastBlockchainVerification = new Date();
-    await investor.save();
+    console.log(`✅ Created investor: ${newInvestor.investorId}`);
 
-    console.log(`⛓ Block created: ${block.hash}`);
+    // If trees are selected, assign them
+    if (selectedTreeIds && Array.isArray(selectedTreeIds) && selectedTreeIds.length > 0) {
+      console.log(`🌳 Assigning ${selectedTreeIds.length} trees...`);
+      
+      for (const treeId of selectedTreeIds) {
+        try {
+          const tree = await Tree.findById(treeId);
+          
+          if (!tree) {
+            console.warn(`⚠️ Tree ${treeId} not found`);
+            continue;
+          }
 
-    // 🔔 SEND NOTIFICATIONS
-    const notificationResult = await NotificationService.sendAllNotifications(
-      investor,
-      'CREATE',
-      null, // No changes for creation
-      modifiedBy,
-      {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-        sessionId: req.session?.id,
-        requestId: Date.now().toString()
+          if (tree.investor) {
+            console.warn(`⚠️ Tree ${tree.treeId} already assigned`);
+            continue;
+          }
+
+          // Add tree to investor's investedTrees
+          newInvestor.investedTrees.push({
+            tree: tree._id,
+            treeId: tree.treeId,
+            investmentDate: new Date(),
+            amountAllocated: 0,
+            status: 'active'
+          });
+
+          // Update tree with investor info
+          tree.investor = newInvestor._id;
+          tree.investorId = newInvestor.investorId;
+          tree.investorName = newInvestor.name;
+          await tree.save();
+
+          console.log(`✅ Assigned tree ${tree.treeId} to investor`);
+        } catch (treeError) {
+          console.error(`❌ Error assigning tree ${treeId}:`, treeError);
+        }
       }
-    ).catch(err => {
-      console.error('⚠️ Notification error (non-critical):', err.message);
+
+      await newInvestor.save();
+    }
+
+    // Populate trees before sending response
+    await newInvestor.populate({
+      path: 'investedTrees.tree',
+      select: 'treeId nfcTagId block healthStatus lifecycleStatus plantedDate'
     });
 
     res.status(201).json({
       success: true,
       message: 'Investor created successfully',
-      data: { 
-        investor, 
-        block: { index: block.index, hash: block.hash },
-        notification: notificationResult || { sent: true, message: 'Notifications processed' }
-      },
+      data: newInvestor
     });
   } catch (error) {
-    console.error('Create investor error:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('❌ Error creating investor:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create investor',
+      error: error.message
+    });
   }
 };
 
-const getAllInvestors = async (req, res) => {
+/**
+ * Update investor
+ */
+exports.updateInvestor = async (req, res) => {
   try {
-    const investors = await Investor.find().sort({ createdAt: -1 });
-    
-    // Add blockchain verification status
-    const enhancedInvestors = investors.map(investor => ({
-      ...investor.toObject(),
-      blockchainVerified: !!investor.blockchainHash,
-      blockchainStatus: investor.blockchainHash ? 'VERIFIED' : 'PENDING'
-    }));
-    
-    res.json({ 
-      success: true, 
-      count: investors.length, 
-      data: enhancedInvestors 
-    });
-  } catch (error) {
-    console.error('Get all investors error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
+    const { id } = req.params;
+    const { 
+      name, 
+      email, 
+      phone, 
+      investment, 
+      status,
+      selectedTreeIds 
+    } = req.body;
 
-const getInvestorById = async (req, res) => {
-  try {
-    const investor = await Investor.findById(req.params.id);
-    if (!investor) {
-      return res.status(404).json({ success: false, error: 'Investor not found' });
-    }
-    
-    // Get blockchain verification status
-    const blockchainVerified = !!investor.blockchainHash;
-    
-    res.json({ 
-      success: true, 
-      data: {
-        ...investor.toObject(),
-        blockchainVerified,
-        verificationStatus: blockchainVerified ? '✅ Verified' : '⚠️ Pending'
-      }
-    });
-  } catch (error) {
-    console.error('Get investor by ID error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
+    console.log(`📡 PUT /api/investors/${id}`);
 
-const updateInvestor = async (req, res) => {
-  try {
-    const investorId = req.params.id;
+    const investor = await Investor.findById(id);
     
-    // Get user info
-    const modifiedBy = {
-      id: req.user?._id || null,
-      name: req.user?.name || 'System Admin',
-      role: req.user?.role || 'ADMIN',
-      email: req.user?.email || 'admin@system.com'
-    };
-    
-    // Get old investor data to track changes
-    const oldInvestor = await Investor.findById(investorId);
-    if (!oldInvestor) {
-      return res.status(404).json({ success: false, error: 'Investor not found' });
-    }
-    
-    // Calculate changes
-    const changes = {};
-    Object.keys(req.body).forEach(key => {
-      const oldValue = oldInvestor[key];
-      const newValue = req.body[key];
-      
-      if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
-        changes[key] = {
-          old: oldValue,
-          new: newValue
-        };
-      }
-    });
-    
-    // Update investor
-    const investor = await Investor.findByIdAndUpdate(
-      investorId,
-      { 
-        ...req.body,
-        updatedBy: modifiedBy.id,
-        updatedAt: Date.now()
-      },
-      { new: true, runValidators: true }
-    );
-
-    if (!investor) {
-      return res.status(404).json({ success: false, error: 'Investor not found' });
+    if (!investor || investor.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: 'Investor not found'
+      });
     }
 
-    // Create blockchain block
-    const blockData = {
-      investorId: investorId,
-      action: 'UPDATE',
-      data: {
-        changes: Object.keys(changes),
-        oldData: {
-          name: oldInvestor.name,
-          email: oldInvestor.email,
-          investment: oldInvestor.investment,
-          phone: oldInvestor.phone
-        },
-        newData: {
-          name: investor.name,
-          email: investor.email,
-          investment: investor.investment,
-          phone: investor.phone
+    // Update basic fields
+    if (name) investor.name = name;
+    if (email) investor.email = email;
+    if (phone) investor.phone = phone;
+    if (status) investor.status = status;
+    if (investment) {
+      const newInvestment = parseFloat(investment);
+      const difference = newInvestment - investor.investment.totalInvestment;
+      investor.investment.totalInvestment = newInvestment;
+      investor.investment.availableBalance += difference;
+    }
+
+    // Handle tree assignments if provided
+    if (selectedTreeIds && Array.isArray(selectedTreeIds)) {
+      // Get current tree IDs
+      const currentTreeIds = investor.investedTrees
+        .filter(inv => inv.status === 'active')
+        .map(inv => inv.tree.toString());
+
+      // Find trees to add and remove
+      const treesToAdd = selectedTreeIds.filter(id => !currentTreeIds.includes(id));
+      const treesToRemove = currentTreeIds.filter(id => !selectedTreeIds.includes(id));
+
+      // Remove trees
+      for (const treeId of treesToRemove) {
+        const tree = await Tree.findById(treeId);
+        if (tree) {
+          tree.investor = null;
+          tree.investorId = null;
+          tree.investorName = null;
+          await tree.save();
+          
+          // Mark investment as inactive
+          const investment = investor.investedTrees.find(
+            inv => inv.tree.toString() === treeId
+          );
+          if (investment) {
+            investment.status = 'inactive';
+          }
         }
-      },
-      modifiedBy: modifiedBy.name
-    };
+      }
 
-    const block = await blockchain.addBlock(blockData);
+      // Add new trees
+      for (const treeId of treesToAdd) {
+        const tree = await Tree.findById(treeId);
+        if (tree && !tree.investor) {
+          investor.investedTrees.push({
+            tree: tree._id,
+            treeId: tree.treeId,
+            investmentDate: new Date(),
+            amountAllocated: 0,
+            status: 'active'
+          });
 
-    // Update investor with new blockchain hash
-    investor.blockchainHash = block.hash;
-    investor.blockchainBlockIndex = block.index;
-    investor.lastBlockchainVerification = new Date();
+          tree.investor = investor._id;
+          tree.investorId = investor.investorId;
+          tree.investorName = investor.name;
+          await tree.save();
+        }
+      }
+    }
+
     await investor.save();
 
-    console.log(`✅ Investor updated: ${investorId}`);
-    console.log(`⛓ Update block created: ${block.hash}`);
-
-    // 🔔 SEND NOTIFICATIONS
-    const notificationResult = await NotificationService.sendAllNotifications(
-      investor,
-      'UPDATE',
-      changes,
-      modifiedBy,
-      {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-        sessionId: req.session?.id,
-        requestId: Date.now().toString()
-      }
-    ).catch(err => {
-      console.error('⚠️ Notification error (non-critical):', err.message);
+    // Populate trees
+    await investor.populate({
+      path: 'investedTrees.tree',
+      select: 'treeId nfcTagId block healthStatus lifecycleStatus plantedDate'
     });
 
-    res.json({
+    console.log(`✅ Updated investor: ${investor.investorId}`);
+
+    res.status(200).json({
       success: true,
       message: 'Investor updated successfully',
-      data: { 
-        investor, 
-        block: { index: block.index, hash: block.hash },
-        changes: changes,
-        notification: notificationResult || { sent: true, message: 'Notifications processed' }
-      },
+      data: investor
     });
   } catch (error) {
-    console.error('Update investor error:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('❌ Error updating investor:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update investor',
+      error: error.message
+    });
   }
 };
 
-const deleteInvestor = async (req, res) => {
+/**
+ * Delete investor (soft delete) and release all trees
+ */
+exports.deleteInvestor = async (req, res) => {
   try {
-    const investorId = req.params.id;
+    const { id } = req.params;
     
-    // Get user info
-    const modifiedBy = {
-      id: req.user?._id || null,
-      name: req.user?.name || 'System Admin',
-      role: req.user?.role || 'ADMIN',
-      email: req.user?.email || 'admin@system.com'
-    };
+    console.log(`📡 DELETE /api/investors/${id}`);
+
+    const investor = await Investor.findById(id);
     
-    // Get investor data before deletion
-    const investor = await Investor.findById(investorId);
-    if (!investor) {
-      return res.status(404).json({ success: false, error: 'Investor not found' });
+    if (!investor || investor.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: 'Investor not found'
+      });
     }
 
-    // Create blockchain block BEFORE deletion
-    const blockData = {
-      investorId: investorId,
-      action: 'DELETE',
-      data: {
-        deletedInvestor: {
-          name: investor.name,
-          email: investor.email,
-          investment: investor.investment,
-          phone: investor.phone
-        }
-      },
-      modifiedBy: modifiedBy.name
-    };
-
-    const block = await blockchain.addBlock(blockData);
-    console.log(`⛓ Deletion block created: ${block.hash}`);
-
-    // 🔔 SEND NOTIFICATIONS (BEFORE deletion)
-    const notificationResult = await NotificationService.sendAllNotifications(
-      investor,
-      'DELETE',
-      null,
-      modifiedBy,
-      {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-        sessionId: req.session?.id,
-        requestId: Date.now().toString()
+    // Release all trees
+    const activeTrees = investor.investedTrees.filter(inv => inv.status === 'active');
+    
+    for (const investment of activeTrees) {
+      const tree = await Tree.findById(investment.tree);
+      if (tree) {
+        tree.investor = null;
+        tree.investorId = null;
+        tree.investorName = null;
+        await tree.save();
+        console.log(`🌳 Released tree ${tree.treeId}`);
       }
-    ).catch(err => {
-      console.error('⚠️ Notification error (non-critical):', err.message);
-    });
+    }
 
-    // Delete investor
-    await Investor.findByIdAndDelete(investorId);
-    console.log(`🗑️ Investor deleted: ${investorId}`);
+    // Soft delete
+    investor.isDeleted = true;
+    investor.deletedAt = new Date();
+    await investor.save();
 
-    res.json({
+    console.log(`✅ Deleted investor: ${investor.investorId}`);
+
+    res.status(200).json({
       success: true,
-      message: 'Investor deleted successfully',
-      data: { 
-        deletedInvestor: {
-          id: investor._id,
-          name: investor.name,
-          email: investor.email
-        }, 
-        block: { index: block.index, hash: block.hash },
-        notification: notificationResult || { sent: true, message: 'Deletion notifications sent' }
-      },
+      message: 'Investor deleted successfully and all trees released'
     });
   } catch (error) {
-    console.error('Delete investor error:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('❌ Error deleting investor:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete investor',
+      error: error.message
+    });
   }
 };
 
-// 🔍 NEW FUNCTION: Get investor with complete audit trail
-const getInvestorWithAuditTrail = async (req, res) => {
+// ========================================
+// TREE ASSIGNMENT OPERATIONS
+// ========================================
+
+/**
+ * Get available trees (not assigned to any investor)
+ */
+exports.getAvailableTrees = async (req, res) => {
   try {
-    const investorId = req.params.id;
+    console.log('📡 GET /api/investors/trees/available');
+
+    const availableTrees = await Tree.find({
+      $or: [
+        { investor: { $exists: false } },
+        { investor: null }
+      ],
+      healthStatus: { $nin: ['Dead', 'Harvested'] },
+      isDeleted: { $ne: true }
+    }).sort({ treeId: 1 });
+
+    console.log(`✅ Found ${availableTrees.length} available trees`);
+
+    res.status(200).json({
+      success: true,
+      count: availableTrees.length,
+      data: availableTrees,
+      trees: availableTrees // Also include as 'trees' for compatibility
+    });
+  } catch (error) {
+    console.error('❌ Error fetching available trees:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch available trees',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get investor for a specific tree
+ */
+exports.getInvestorByTree = async (req, res) => {
+  try {
+    const { treeId } = req.params;
     
-    // Get investor
-    const investor = await Investor.findById(investorId);
-    if (!investor) {
-      return res.status(404).json({ success: false, error: 'Investor not found' });
+    console.log(`📡 GET /api/investors/tree/${treeId}`);
+
+    const tree = await Tree.findOne({ treeId }).populate('investor');
+
+    if (!tree) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tree not found'
+      });
     }
+
+    if (!tree.investor) {
+      return res.status(200).json({
+        success: true,
+        message: 'This tree is not assigned to any investor',
+        data: null
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: tree.investor
+    });
+  } catch (error) {
+    console.error('❌ Error fetching investor by tree:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch investor',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Assign tree to investor
+ */
+exports.assignTreeToInvestor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { treeId, amountAllocated } = req.body;
+
+    console.log(`📡 POST /api/investors/${id}/assign-tree`);
+
+    const investor = await Investor.findById(id);
+    if (!investor || investor.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: 'Investor not found'
+      });
+    }
+
+    const tree = await Tree.findById(treeId);
+    if (!tree) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tree not found'
+      });
+    }
+
+    if (tree.investor) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tree is already assigned to another investor'
+      });
+    }
+
+    // Add to investor's investedTrees
+    investor.investedTrees.push({
+      tree: tree._id,
+      treeId: tree.treeId,
+      investmentDate: new Date(),
+      amountAllocated: amountAllocated || 0,
+      status: 'active'
+    });
+
+    // Update tree
+    tree.investor = investor._id;
+    tree.investorId = investor.investorId;
+    tree.investorName = investor.name;
+
+    await investor.save();
+    await tree.save();
+
+    console.log(`✅ Assigned tree ${tree.treeId} to investor ${investor.investorId}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Tree assigned successfully',
+      data: { investor, tree }
+    });
+  } catch (error) {
+    console.error('❌ Error assigning tree:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to assign tree',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Unassign tree from investor
+ */
+exports.unassignTreeFromInvestor = async (req, res) => {
+  try {
+    const { id, treeId } = req.params;
+
+    console.log(`📡 POST /api/investors/${id}/unassign-tree/${treeId}`);
+
+    const investor = await Investor.findById(id);
+    if (!investor || investor.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: 'Investor not found'
+      });
+    }
+
+    const tree = await Tree.findById(treeId);
+    if (!tree) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tree not found'
+      });
+    }
+
+    // Mark investment as inactive
+    const investment = investor.investedTrees.find(
+      inv => inv.tree.toString() === treeId && inv.status === 'active'
+    );
+
+    if (investment) {
+      investment.status = 'inactive';
+    }
+
+    // Clear tree's investor info
+    tree.investor = null;
+    tree.investorId = null;
+    tree.investorName = null;
+
+    await investor.save();
+    await tree.save();
+
+    console.log(`✅ Unassigned tree ${tree.treeId} from investor ${investor.investorId}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Tree unassigned successfully',
+      data: { investor, tree }
+    });
+  } catch (error) {
+    console.error('❌ Error unassigning tree:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to unassign tree',
+      error: error.message
+    });
+  }
+};
+
+// ========================================
+// STATISTICS & ANALYTICS
+// ========================================
+
+/**
+ * Get investor statistics
+ */
+exports.getInvestorStats = async (req, res) => {
+  try {
+    console.log('📡 GET /api/investors/stats/overview');
+
+    const totalInvestors = await Investor.countDocuments({ isDeleted: false });
+    const activeInvestors = await Investor.countDocuments({ status: 'active', isDeleted: false });
     
-    // Get blockchain audit trail
-    const BlockchainRecord = require('../models/BlockchainRecord');
-    const auditTrail = await BlockchainRecord.find({
-      'data.investorId': investorId,
-    }).sort({ timestamp: -1 });
-    
-    // Get notifications
-    const NotificationsAlerts = require('../models/NotificationsAlerts');
-    const notifications = await NotificationsAlerts.find({ investorId })
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .lean();
-    
-    // Get blockchain verification status
-    const isValid = blockchain.isChainValid();
-    
-    res.json({ 
-      success: true, 
-      data: {
-        investor: {
-          ...investor.toObject(),
-          blockchainVerified: !!investor.blockchainHash
-        },
-        auditTrail: {
-          blockchain: auditTrail,
-          notifications: notifications
-        },
-        verification: {
-          isValid: isValid,
-          message: isValid ? 'Blockchain integrity verified ✓' : 'Blockchain tampered ✗',
-          lastVerified: investor.lastBlockchainVerification
-        },
-        summary: {
-          totalBlocks: auditTrail.length,
-          totalNotifications: notifications.length,
-          lastActivity: auditTrail[0]?.timestamp || notifications[0]?.createdAt
+    const investorData = await Investor.aggregate([
+      { $match: { isDeleted: false } },
+      {
+        $group: {
+          _id: null,
+          totalInvestment: { $sum: '$investment.totalInvestment' },
+          totalInvested: { $sum: '$investment.investedAmount' },
+          totalAvailable: { $sum: '$investment.availableBalance' }
         }
+      }
+    ]);
+
+    const assignedTrees = await Tree.countDocuments({ investor: { $ne: null } });
+    const availableTrees = await Tree.countDocuments({ investor: null });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalInvestors,
+        activeInvestors,
+        inactiveInvestors: totalInvestors - activeInvestors,
+        totalInvestment: investorData[0]?.totalInvestment || 0,
+        totalInvested: investorData[0]?.totalInvested || 0,
+        totalAvailable: investorData[0]?.totalAvailable || 0,
+        assignedTrees,
+        availableTrees
       }
     });
   } catch (error) {
-    console.error('Get investor audit trail error:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('❌ Error fetching investor stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch investor statistics',
+      error: error.message
+    });
   }
 };
 
-module.exports = {
-  createInvestor,
-  getAllInvestors,
-  getInvestorById,
-  updateInvestor,
-  deleteInvestor,
-  getInvestorWithAuditTrail // Add this new function
+/**
+ * Get investor performance metrics
+ */
+exports.getInvestorPerformance = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    console.log(`📡 GET /api/investors/${id}/performance`);
+
+    const investor = await Investor.findById(id)
+      .populate({
+        path: 'investedTrees.tree',
+        select: 'treeId healthStatus lifecycleStatus inoculationCount harvestData'
+      });
+
+    if (!investor || investor.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: 'Investor not found'
+      });
+    }
+
+    const activeTrees = investor.investedTrees.filter(inv => inv.status === 'active');
+    
+    const performance = {
+      totalTrees: activeTrees.length,
+      healthyTrees: activeTrees.filter(inv => inv.tree?.healthStatus === 'Healthy').length,
+      harvestedTrees: activeTrees.filter(inv => inv.tree?.lifecycleStatus === 'Harvested').length,
+      readyForHarvest: activeTrees.filter(inv => inv.tree?.lifecycleStatus === 'Ready for Harvest').length,
+      totalResinYield: activeTrees.reduce((sum, inv) => {
+        return sum + (inv.tree?.harvestData?.resinYield || 0);
+      }, 0),
+      averageTreeAge: calculateAverageAge(activeTrees),
+      investmentUtilization: (investor.investment.investedAmount / investor.investment.totalInvestment * 100).toFixed(2)
+    };
+
+    res.status(200).json({
+      success: true,
+      data: performance
+    });
+  } catch (error) {
+    console.error('❌ Error fetching investor performance:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch investor performance',
+      error: error.message
+    });
+  }
 };
+
+// Helper function to calculate average tree age
+function calculateAverageAge(investments) {
+  if (investments.length === 0) return 0;
+  
+  const totalMonths = investments.reduce((sum, inv) => {
+    if (!inv.tree?.plantedDate) return sum;
+    const planted = new Date(inv.tree.plantedDate);
+    const now = new Date();
+    const months = (now.getFullYear() - planted.getFullYear()) * 12 + 
+                   (now.getMonth() - planted.getMonth());
+    return sum + months;
+  }, 0);
+  
+  return Math.round(totalMonths / investments.length);
+}

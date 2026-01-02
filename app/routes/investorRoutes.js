@@ -1,24 +1,51 @@
-// routes/investorRoutes.js
+// path: app/routes/investorRoutes.js
 const express = require('express');
-const {
-  createInvestor,
-  getAllInvestors,
-  getInvestorById,
-  updateInvestor,
-  deleteInvestor,
-  getInvestorWithAuditTrail // Add this
-} = require('../controllers/investorController');
-
 const router = express.Router();
+const investorController = require('../controllers/investorController');
 
-// CRUD routes
-router.post('/', createInvestor);
-router.get('/', getAllInvestors);
-router.get('/:id', getInvestorById);
-router.put('/:id', updateInvestor);
-router.delete('/:id', deleteInvestor);
+// ========================================
+// INVESTOR CRUD OPERATIONS
+// ========================================
 
-// Enhanced routes
-router.get('/:id/audit-trail', getInvestorWithAuditTrail); // Add this
+// Get all investors with their trees
+router.get('/', investorController.getAllInvestors);
+
+// Get single investor by ID
+router.get('/:id', investorController.getInvestorById);
+
+// Create new investor with tree assignment
+router.post('/', investorController.createInvestor);
+
+// Update investor
+router.put('/:id', investorController.updateInvestor);
+
+// Delete investor (soft delete)
+router.delete('/:id', investorController.deleteInvestor);
+
+// ========================================
+// TREE ASSIGNMENT OPERATIONS
+// ========================================
+
+// Get available trees for assignment
+router.get('/trees/available', investorController.getAvailableTrees);
+
+// Get investor for a specific tree
+router.get('/tree/:treeId', investorController.getInvestorByTree);
+
+// Assign tree to investor
+router.post('/:id/assign-tree', investorController.assignTreeToInvestor);
+
+// Unassign tree from investor
+router.post('/:id/unassign-tree/:treeId', investorController.unassignTreeFromInvestor);
+
+// ========================================
+// STATISTICS & ANALYTICS
+// ========================================
+
+// Get investor statistics
+router.get('/stats/overview', investorController.getInvestorStats);
+
+// Get investor performance
+router.get('/:id/performance', investorController.getInvestorPerformance);
 
 module.exports = router;

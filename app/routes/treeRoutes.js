@@ -1,4 +1,3 @@
-//path: oudra-server(same backend for web & mobile apps)/app/routes/treeRoutes.js
 const express = require('express');
 const router = express.Router();
 const treeController = require('../controllers/treeController');
@@ -18,13 +17,11 @@ router.put('/trees/:treeId/nfc', treeController.updateNFCTag);
 router.put('/trees/:treeId/gps', treeController.updateGPS);
 router.put('/trees/:treeId/archive', treeController.archiveTree);
 router.put('/trees/:treeId/mobile-update', treeController.mobileUpdateTree);
+router.put('/trees/:treeId/mobile-profile', treeController.mobileUpdateTreeProfile);
 
 // ===== FIELD NOTES / OBSERVATIONS =====
 router.get('/trees/:treeId/observations', treeController.getTreeObservations);
 router.post('/trees/:treeId/observations', treeController.addObservation);
-router.put('/observations/:observationId', treeController.updateObservation);
-router.delete('/observations/:observationId', treeController.deleteObservation);
-
 router.put('/observations/:observationId', treeController.updateObservation);
 router.delete('/observations/:observationId', treeController.deleteObservation);
 
