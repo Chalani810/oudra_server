@@ -1,4 +1,3 @@
-//path: oudra-server(same backend for web & mobile apps)/server.js
 const express = require("express");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
@@ -27,6 +26,9 @@ const predictionRoutes = require('./app/routes/predictionRoutes');
 const treeRoutes = require('./app/routes/treeRoutes');
 const syncRoutes = require('./app/routes/syncRoutes');
 
+
+const iotRoutes = require('./app/routes/iotRoutes');
+
 // Blockchain routes
 const investorRoutes = require("./app/routes/investorRoutes");
 const blockchainRoutes = require("./app/routes/blockchainRoutes");
@@ -38,7 +40,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: "*", // Allow ALL origins during development
+  origin: "*",
   credentials: true
 }));
 app.use(express.json());
@@ -68,7 +70,8 @@ app.get("/", (req, res) => {
     endpoints: {
       investors: "/api/investors",
       blockchain: "/api/blockchain/chain",
-      verify: "/api/blockchain/verify"
+      verify: "/api/blockchain/verify",
+      sensor: "/api/sensor"
     }
   });
 });
@@ -104,16 +107,20 @@ app.use("/product_report", productreportRoutes);
 app.use("/customer_report", customerReportRoutes);
 app.use("/predict", predictionRoutes);
 app.use('/api', treeRoutes);
-app.use('/api', syncRoutes); 
+app.use('/api', syncRoutes);
+
+
+app.use(express.json()); // Essential to read manualPh from mobile
+app.use('/api', iotRoutes);
+
+// Blockchain routes
+app.use("/api/investors", investorRoutes);
+app.use("/api/blockchain", blockchainRoutes);
 
 // Optional catch-all for undefined routes
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
-
-// Blockchain routes - IMPORTANT: These must be defined
-app.use("/api/investors", investorRoutes);
-app.use("/api/blockchain", blockchainRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -136,16 +143,12 @@ app.use((err, req, res, next) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`\n🚀 Server running on http://localhost:${PORT}`);
-  console.log(`\n📊 Blockchain API Endpoints:`);
-  console.log(`   GET    http://localhost:${PORT}/api/investors`);
-  console.log(`   POST   http://localhost:${PORT}/api/investors`);
-  console.log(`   GET    http://localhost:${PORT}/api/investors/:id`);
-  console.log(`   PUT    http://localhost:${PORT}/api/investors/:id`);
-  console.log(`   DELETE http://localhost:${PORT}/api/investors/:id`);
-  console.log(`   GET    http://localhost:${PORT}/api/blockchain/chain`);
-  console.log(`   GET    http://localhost:${PORT}/api/blockchain/verify`);
-  console.log(`   GET    http://localhost:${PORT}/api/blockchain/audit/:investorId`);
-  console.log(`   GET    http://localhost:${PORT}/api/blockchain/block/:index\n`);
+  console.log(`\n📊 Sensor API Endpoints:`);
+  console.log(`   POST   http://localhost:${PORT}/api/sensor/sync/:treeId`);
+  console.log(`   POST   http://localhost:${PORT}/api/sensor/ph/:treeId`);
+  console.log(`   GET    http://localhost:${PORT}/api/sensor/:treeId/latest`);
+  console.log(`   GET    http://localhost:${PORT}/api/sensor/:treeId/history`);
+  console.log(`   GET    http://localhost:${PORT}/api/sensor/health/esp32\n`);
 });
 
 // Graceful shutdown
