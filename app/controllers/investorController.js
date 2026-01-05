@@ -1,608 +1,471 @@
 // path: app/controllers/investorController.js
 const Investor = require('../models/Investor');
 const Tree = require('../models/TreeModel');
-const mongoose = require('mongoose');
 
 // ========================================
-// INVESTOR CRUD OPERATIONS
+// GET ALL INVESTORS WITH INVESTED TREES
 // ========================================
-
 exports.getAllInvestors = async (req, res) => {
   try {
-    console.log('📡 GET /api/investors - Fetching all investors...');
-    
-    const investors = await Investor.find({ isDeleted: false })
+    const investors = await Investor.find()
       .populate({
         path: 'investedTrees.tree',
-        select: 'treeId nfcTagId block healthStatus lifecycleStatus plantedDate inoculationCount gps'
+        select: 'treeId block healthStatus lifecycleStatus plantedDate investorId investorName'
       })
       .sort({ createdAt: -1 });
 
-    console.log(`✅ Found ${investors.length} investors`);
-
-    // Format response to match frontend expectations
-    const formattedInvestors = investors.map(investor => ({
-      _id: investor._id,
-      investorId: investor.investorId,
-      name: investor.name,
-      email: investor.email,
-      phone: investor.phone,
-      investment: investor.investment.totalInvestment,
-      status: investor.status,
-      investedTrees: investor.investedTrees,
-      treeCount: investor.activeTreeCount,
-      certificateCount: investor.activeCertificateCount,
-      createdAt: investor.createdAt,
-      updatedAt: investor.updatedAt
+    // ✅ FIX #1: Format with tree details
+    const formatted = investors.map(inv => ({
+      _id: inv._id,
+      investorId: inv.investorId,
+      name: inv.name,
+      email: inv.email,
+      phone: inv.phone,
+      investment: inv.investment ?? 0,
+      status: inv.status,
+      treeCount: inv.investedTrees.length,
+      investedTrees: inv.investedTrees.map(treeItem => ({
+        _id: treeItem.tree?._id,
+        treeId: treeItem.treeId,
+        treeDetails: treeItem.tree ? {
+          treeId: treeItem.tree.treeId,
+          block: treeItem.tree.block,
+          healthStatus: treeItem.tree.healthStatus,
+          lifecycleStatus: treeItem.tree.lifecycleStatus,
+          plantedDate: treeItem.tree.plantedDate,
+          investorId: treeItem.tree.investorId,
+          investorName: treeItem.tree.investorName
+        } : null
+      })),
+      createdAt: inv.createdAt
     }));
 
-    res.status(200).json({
-      success: true,
-      count: formattedInvestors.length,
-      data: formattedInvestors,
-      investors: formattedInvestors // ALSO INCLUDE AS 'investors' FOR COMPATIBILITY
-    });
-  } catch (error) {
-    console.error('❌ Error fetching investors:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch investors',
-      error: error.message
-    });
+    res.json({ success: true, data: formatted });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
-/**
- * Get single investor by ID
- */
+
+// ========================================
+// GET INVESTOR BY ID WITH DETAILS
+// ========================================
 exports.getInvestorById = async (req, res) => {
   try {
-    const { id } = req.params;
-    
-    console.log(`📡 GET /api/investors/${id}`);
-
-    const investor = await Investor.findById(id)
+    const investor = await Investor.findById(req.params.id)
       .populate({
         path: 'investedTrees.tree',
-        select: 'treeId nfcTagId block healthStatus lifecycleStatus plantedDate inoculationCount gps harvestData'
+        select: 'treeId block healthStatus lifecycleStatus plantedDate investorId investorName gps harvestData'
       });
 
-    if (!investor || investor.isDeleted) {
-      return res.status(404).json({
-        success: false,
-        message: 'Investor not found'
-      });
+    if (!investor) {
+      return res.status(404).json({ success: false, message: 'Investor not found' });
     }
 
-    console.log(`✅ Found investor: ${investor.name}`);
+    // ✅ FIX #1: Format tree details
+    const formattedInvestor = {
+      ...investor.toObject(),
+      investedTrees: investor.investedTrees.map(treeItem => ({
+        ...treeItem.toObject(),
+        treeDetails: treeItem.tree ? {
+          treeId: treeItem.tree.treeId,
+          block: treeItem.tree.block,
+          healthStatus: treeItem.tree.healthStatus,
+          lifecycleStatus: treeItem.tree.lifecycleStatus,
+          plantedDate: treeItem.tree.plantedDate,
+          investorId: treeItem.tree.investorId,
+          investorName: treeItem.tree.investorName,
+          gps: treeItem.tree.gps,
+          harvestData: treeItem.tree.harvestData
+        } : null
+      }))
+    };
 
-    res.status(200).json({
-      success: true,
-      data: investor
-    });
-  } catch (error) {
-    console.error('❌ Error fetching investor:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch investor',
-      error: error.message
-    });
+    res.json({ success: true, data: formattedInvestor });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Create new investor with optional tree assignment
- */
+// ========================================
+// CREATE INVESTOR (FIXED INVESTMENT)
+// ========================================
 exports.createInvestor = async (req, res) => {
   try {
-    const { 
-      name, 
-      email, 
-      phone, 
-      investment, 
-      status,
-      selectedTreeIds // Array of tree IDs to assign
-    } = req.body;
+    const { name, email, phone, investment, status } = req.body;
 
-    console.log('📡 POST /api/investors - Creating new investor...');
-    console.log('Data:', { name, email, phone, investment, selectedTreeIds });
-
-    // Validation
-    if (!name || !email || !phone || !investment) {
+    if (!name || !email || !phone || investment === '' || investment === undefined) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: name, email, phone, investment'
+        message: 'All fields including investment are required'
       });
     }
 
-    // Check if email already exists
-    const existingInvestor = await Investor.findOne({ email, isDeleted: false });
-    if (existingInvestor) {
+    const parsedInvestment = Number(investment);
+    if (isNaN(parsedInvestment) || parsedInvestment < 0) {
       return res.status(400).json({
         success: false,
-        message: 'An investor with this email already exists'
+        message: 'Investment must be a valid positive number'
       });
     }
 
-    // Create investor object
-    const investorData = {
+    const investor = await Investor.create({
       name,
       email,
       phone,
-      status: status || 'active',
-      investment: {
-        totalInvestment: parseFloat(investment),
-        availableBalance: parseFloat(investment),
-        investedAmount: 0
-      }
-    };
-
-    // Create the investor
-    const newInvestor = new Investor(investorData);
-    await newInvestor.save();
-
-    console.log(`✅ Created investor: ${newInvestor.investorId}`);
-
-    // If trees are selected, assign them
-    if (selectedTreeIds && Array.isArray(selectedTreeIds) && selectedTreeIds.length > 0) {
-      console.log(`🌳 Assigning ${selectedTreeIds.length} trees...`);
-      
-      for (const treeId of selectedTreeIds) {
-        try {
-          const tree = await Tree.findById(treeId);
-          
-          if (!tree) {
-            console.warn(`⚠️ Tree ${treeId} not found`);
-            continue;
-          }
-
-          if (tree.investor) {
-            console.warn(`⚠️ Tree ${tree.treeId} already assigned`);
-            continue;
-          }
-
-          // Add tree to investor's investedTrees
-          newInvestor.investedTrees.push({
-            tree: tree._id,
-            treeId: tree.treeId,
-            investmentDate: new Date(),
-            amountAllocated: 0,
-            status: 'active'
-          });
-
-          // Update tree with investor info
-          tree.investor = newInvestor._id;
-          tree.investorId = newInvestor.investorId;
-          tree.investorName = newInvestor.name;
-          await tree.save();
-
-          console.log(`✅ Assigned tree ${tree.treeId} to investor`);
-        } catch (treeError) {
-          console.error(`❌ Error assigning tree ${treeId}:`, treeError);
-        }
-      }
-
-      await newInvestor.save();
-    }
-
-    // Populate trees before sending response
-    await newInvestor.populate({
-      path: 'investedTrees.tree',
-      select: 'treeId nfcTagId block healthStatus lifecycleStatus plantedDate'
+      investment: parsedInvestment,
+      status: status || 'active'
     });
 
-    res.status(201).json({
-      success: true,
-      message: 'Investor created successfully',
-      data: newInvestor
-    });
-  } catch (error) {
-    console.error('❌ Error creating investor:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create investor',
-      error: error.message
-    });
+    res.status(201).json({ success: true, data: investor });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Update investor
- */
+// ========================================
+// ✅ FIX #2: UPDATE INVESTOR WITH TREE MANAGEMENT
+// ========================================
 exports.updateInvestor = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { 
-      name, 
-      email, 
-      phone, 
-      investment, 
-      status,
-      selectedTreeIds 
-    } = req.body;
-
-    console.log(`📡 PUT /api/investors/${id}`);
-
-    const investor = await Investor.findById(id);
-    
-    if (!investor || investor.isDeleted) {
-      return res.status(404).json({
-        success: false,
-        message: 'Investor not found'
-      });
+    const investor = await Investor.findById(req.params.id);
+    if (!investor) {
+      return res.status(404).json({ success: false, message: 'Investor not found' });
     }
 
-    // Update basic fields
+    const { name, email, phone, investment, status, treesToAdd, treesToRemove } = req.body;
+
+    // Update basic info
     if (name) investor.name = name;
     if (email) investor.email = email;
     if (phone) investor.phone = phone;
     if (status) investor.status = status;
-    if (investment) {
-      const newInvestment = parseFloat(investment);
-      const difference = newInvestment - investor.investment.totalInvestment;
-      investor.investment.totalInvestment = newInvestment;
-      investor.investment.availableBalance += difference;
+
+    if (investment !== undefined) {
+      const parsedInvestment = Number(investment);
+      if (isNaN(parsedInvestment) || parsedInvestment < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Investment must be a valid positive number'
+        });
+      }
+      investor.investment = parsedInvestment;
     }
 
-    // Handle tree assignments if provided
-    if (selectedTreeIds && Array.isArray(selectedTreeIds)) {
-      // Get current tree IDs
-      const currentTreeIds = investor.investedTrees
-        .filter(inv => inv.status === 'active')
-        .map(inv => inv.tree.toString());
-
-      // Find trees to add and remove
-      const treesToAdd = selectedTreeIds.filter(id => !currentTreeIds.includes(id));
-      const treesToRemove = currentTreeIds.filter(id => !selectedTreeIds.includes(id));
-
-      // Remove trees
-      for (const treeId of treesToRemove) {
-        const tree = await Tree.findById(treeId);
-        if (tree) {
-          tree.investor = null;
-          tree.investorId = null;
-          tree.investorName = null;
-          await tree.save();
-          
-          // Mark investment as inactive
-          const investment = investor.investedTrees.find(
-            inv => inv.tree.toString() === treeId
-          );
-          if (investment) {
-            investment.status = 'inactive';
-          }
-        }
-      }
-
-      // Add new trees
+    // ✅ FIX #2: Add trees to investor
+    if (treesToAdd && Array.isArray(treesToAdd) && treesToAdd.length > 0) {
       for (const treeId of treesToAdd) {
         const tree = await Tree.findById(treeId);
         if (tree && !tree.investor) {
-          investor.investedTrees.push({
-            tree: tree._id,
-            treeId: tree.treeId,
-            investmentDate: new Date(),
-            amountAllocated: 0,
-            status: 'active'
-          });
-
+          // Update tree
           tree.investor = investor._id;
-          tree.investorId = investor.investorId;
           tree.investorName = investor.name;
+          tree.investorId = investor.investorId;
           await tree.save();
+
+          // Add to investor's invested trees
+          if (!investor.investedTrees.some(t => t.tree.toString() === treeId)) {
+            investor.investedTrees.push({
+              tree: tree._id,
+              treeId: tree.treeId
+            });
+          }
+        }
+      }
+    }
+
+    // ✅ FIX #2: Remove trees from investor
+    if (treesToRemove && Array.isArray(treesToRemove) && treesToRemove.length > 0) {
+      for (const treeId of treesToRemove) {
+        const tree = await Tree.findById(treeId);
+        if (tree && tree.investor && tree.investor.toString() === investor._id.toString()) {
+          // Update tree
+          tree.investor = null;
+          tree.investorName = null;
+          tree.investorId = null;
+          await tree.save();
+
+          // Remove from investor's invested trees
+          investor.investedTrees = investor.investedTrees.filter(
+            t => t.tree.toString() !== treeId
+          );
         }
       }
     }
 
     await investor.save();
+    
+    // Get updated investor with populated trees
+    const updatedInvestor = await Investor.findById(investor._id)
+      .populate({
+        path: 'investedTrees.tree',
+        select: 'treeId block healthStatus lifecycleStatus plantedDate investorId investorName'
+      });
 
-    // Populate trees
-    await investor.populate({
-      path: 'investedTrees.tree',
-      select: 'treeId nfcTagId block healthStatus lifecycleStatus plantedDate'
+    res.json({ 
+      success: true, 
+      data: updatedInvestor,
+      message: 'Investor updated successfully' 
     });
-
-    console.log(`✅ Updated investor: ${investor.investorId}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Investor updated successfully',
-      data: investor
-    });
-  } catch (error) {
-    console.error('❌ Error updating investor:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update investor',
-      error: error.message
-    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Delete investor (soft delete) and release all trees
- */
+// ========================================
+// DELETE INVESTOR
+// ========================================
 exports.deleteInvestor = async (req, res) => {
   try {
-    const { id } = req.params;
-    
-    console.log(`📡 DELETE /api/investors/${id}`);
-
-    const investor = await Investor.findById(id);
-    
-    if (!investor || investor.isDeleted) {
-      return res.status(404).json({
-        success: false,
-        message: 'Investor not found'
-      });
+    const investor = await Investor.findById(req.params.id);
+    if (!investor) {
+      return res.status(404).json({ success: false, message: 'Investor not found' });
     }
 
-    // Release all trees
-    const activeTrees = investor.investedTrees.filter(inv => inv.status === 'active');
-    
-    for (const investment of activeTrees) {
-      const tree = await Tree.findById(investment.tree);
+    // Unassign all trees
+    for (const inv of investor.investedTrees) {
+      const tree = await Tree.findById(inv.tree);
       if (tree) {
         tree.investor = null;
-        tree.investorId = null;
         tree.investorName = null;
+        tree.investorId = null;
         await tree.save();
-        console.log(`🌳 Released tree ${tree.treeId}`);
       }
     }
 
-    // Soft delete
-    investor.isDeleted = true;
-    investor.deletedAt = new Date();
-    await investor.save();
-
-    console.log(`✅ Deleted investor: ${investor.investorId}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Investor deleted successfully and all trees released'
-    });
-  } catch (error) {
-    console.error('❌ Error deleting investor:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to delete investor',
-      error: error.message
-    });
+    await investor.deleteOne();
+    res.json({ success: true, message: 'Investor deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
 // ========================================
-// TREE ASSIGNMENT OPERATIONS
+// GET AVAILABLE TREES
 // ========================================
-
-/**
- * Get available trees (not assigned to any investor)
- */
 exports.getAvailableTrees = async (req, res) => {
   try {
-    console.log('📡 GET /api/investors/trees/available');
+    const trees = await Tree.find({
+      $or: [{ investor: null }, { investor: { $exists: false } }],
+      healthStatus: { $nin: ['Dead', 'Harvested'] }
+    })
+    .select('treeId block healthStatus lifecycleStatus plantedDate')
+    .sort({ treeId: 1 });
 
-    const availableTrees = await Tree.find({
-      $or: [
-        { investor: { $exists: false } },
-        { investor: null }
-      ],
-      healthStatus: { $nin: ['Dead', 'Harvested'] },
-      isDeleted: { $ne: true }
-    }).sort({ treeId: 1 });
-
-    console.log(`✅ Found ${availableTrees.length} available trees`);
-
-    res.status(200).json({
-      success: true,
-      count: availableTrees.length,
-      data: availableTrees,
-      trees: availableTrees // Also include as 'trees' for compatibility
-    });
-  } catch (error) {
-    console.error('❌ Error fetching available trees:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch available trees',
-      error: error.message
-    });
+    res.json({ success: true, data: trees });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Get investor for a specific tree
- */
-exports.getInvestorByTree = async (req, res) => {
+// ========================================
+// GET INVESTOR'S TREES
+// ========================================
+exports.getInvestorTrees = async (req, res) => {
   try {
-    const { treeId } = req.params;
-    
-    console.log(`📡 GET /api/investors/tree/${treeId}`);
-
-    const tree = await Tree.findOne({ treeId }).populate('investor');
-
-    if (!tree) {
-      return res.status(404).json({
-        success: false,
-        message: 'Tree not found'
-      });
+    const investor = await Investor.findById(req.params.id);
+    if (!investor) {
+      return res.status(404).json({ success: false, message: 'Investor not found' });
     }
 
-    if (!tree.investor) {
-      return res.status(200).json({
-        success: true,
-        message: 'This tree is not assigned to any investor',
-        data: null
-      });
-    }
+    const trees = await Tree.find({ investor: investor._id })
+      .select('treeId block healthStatus lifecycleStatus plantedDate investorId investorName gps')
+      .sort({ treeId: 1 });
 
-    res.status(200).json({
-      success: true,
-      data: tree.investor
-    });
-  } catch (error) {
-    console.error('❌ Error fetching investor by tree:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch investor',
-      error: error.message
-    });
+    res.json({ success: true, data: trees });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Assign tree to investor
- */
+// ========================================
+// ASSIGN TREE TO INVESTOR
+// ========================================
 exports.assignTreeToInvestor = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { treeId, amountAllocated } = req.body;
-
-    console.log(`📡 POST /api/investors/${id}/assign-tree`);
-
-    const investor = await Investor.findById(id);
-    if (!investor || investor.isDeleted) {
-      return res.status(404).json({
-        success: false,
-        message: 'Investor not found'
-      });
-    }
-
+    const { treeId } = req.body;
+    const investor = await Investor.findById(req.params.id);
     const tree = await Tree.findById(treeId);
-    if (!tree) {
-      return res.status(404).json({
-        success: false,
-        message: 'Tree not found'
-      });
+
+    if (!investor || !tree) {
+      return res.status(404).json({ success: false, message: 'Investor or Tree not found' });
     }
 
     if (tree.investor) {
-      return res.status(400).json({
-        success: false,
-        message: 'Tree is already assigned to another investor'
-      });
+      return res.status(400).json({ success: false, message: 'Tree already assigned' });
     }
-
-    // Add to investor's investedTrees
-    investor.investedTrees.push({
-      tree: tree._id,
-      treeId: tree.treeId,
-      investmentDate: new Date(),
-      amountAllocated: amountAllocated || 0,
-      status: 'active'
-    });
 
     // Update tree
     tree.investor = investor._id;
-    tree.investorId = investor.investorId;
     tree.investorName = investor.name;
-
-    await investor.save();
+    tree.investorId = investor.investorId;
     await tree.save();
 
-    console.log(`✅ Assigned tree ${tree.treeId} to investor ${investor.investorId}`);
+    // Update investor
+    if (!investor.investedTrees.some(t => t.tree.toString() === treeId)) {
+      investor.investedTrees.push({
+        tree: tree._id,
+        treeId: tree.treeId
+      });
+      await investor.save();
+    }
 
-    res.status(200).json({
-      success: true,
+    res.json({ 
+      success: true, 
       message: 'Tree assigned successfully',
-      data: { investor, tree }
+      data: { treeId: tree.treeId, investorId: investor.investorId }
     });
-  } catch (error) {
-    console.error('❌ Error assigning tree:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to assign tree',
-      error: error.message
-    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Unassign tree from investor
- */
+// ========================================
+// UNASSIGN TREE
+// ========================================
 exports.unassignTreeFromInvestor = async (req, res) => {
   try {
-    const { id, treeId } = req.params;
-
-    console.log(`📡 POST /api/investors/${id}/unassign-tree/${treeId}`);
-
-    const investor = await Investor.findById(id);
-    if (!investor || investor.isDeleted) {
-      return res.status(404).json({
-        success: false,
-        message: 'Investor not found'
-      });
-    }
-
+    const { treeId } = req.params;
+    const investor = await Investor.findById(req.params.id);
     const tree = await Tree.findById(treeId);
-    if (!tree) {
-      return res.status(404).json({
-        success: false,
-        message: 'Tree not found'
-      });
+
+    if (!investor || !tree) {
+      return res.status(404).json({ success: false, message: 'Not found' });
     }
 
-    // Mark investment as inactive
-    const investment = investor.investedTrees.find(
-      inv => inv.tree.toString() === treeId && inv.status === 'active'
+    // Remove from investor
+    investor.investedTrees = investor.investedTrees.filter(
+      t => t.tree.toString() !== treeId
     );
-
-    if (investment) {
-      investment.status = 'inactive';
-    }
-
-    // Clear tree's investor info
-    tree.investor = null;
-    tree.investorId = null;
-    tree.investorName = null;
-
     await investor.save();
+
+    // Update tree
+    tree.investor = null;
+    tree.investorName = null;
+    tree.investorId = null;
     await tree.save();
 
-    console.log(`✅ Unassigned tree ${tree.treeId} from investor ${investor.investorId}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Tree unassigned successfully',
-      data: { investor, tree }
+    res.json({ 
+      success: true, 
+      message: 'Tree unassigned successfully' 
     });
-  } catch (error) {
-    console.error('❌ Error unassigning tree:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to unassign tree',
-      error: error.message
-    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
 // ========================================
-// STATISTICS & ANALYTICS
+// ✅ NEW: GET TREES FOR BULK ASSIGNMENT
 // ========================================
+exports.getTreesForBulkAssignment = async (req, res) => {
+  try {
+    const trees = await Tree.find()
+      .select('treeId block healthStatus lifecycleStatus investor investorId investorName')
+      .sort({ treeId: 1 });
 
-/**
- * Get investor statistics
- */
+    const formatted = trees.map(tree => ({
+      _id: tree._id,
+      treeId: tree.treeId,
+      block: tree.block,
+      healthStatus: tree.healthStatus,
+      lifecycleStatus: tree.lifecycleStatus,
+      currentInvestor: tree.investorId ? {
+        investorId: tree.investorId,
+        investorName: tree.investorName
+      } : null,
+      isAvailable: !tree.investorId
+    }));
+
+    res.json({ success: true, data: formatted });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ========================================
+// ✅ NEW: BULK ASSIGN TREES
+// ========================================
+exports.bulkAssignTrees = async (req, res) => {
+  try {
+    const { treeIds } = req.body;
+    const investor = await Investor.findById(req.params.id);
+
+    if (!investor) {
+      return res.status(404).json({ success: false, message: 'Investor not found' });
+    }
+
+    if (!Array.isArray(treeIds) || treeIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'No trees selected' });
+    }
+
+    const results = {
+      assigned: [],
+      alreadyAssigned: [],
+      notFound: []
+    };
+
+    for (const treeId of treeIds) {
+      const tree = await Tree.findById(treeId);
+      
+      if (!tree) {
+        results.notFound.push(treeId);
+        continue;
+      }
+
+      if (tree.investor) {
+        results.alreadyAssigned.push(tree.treeId);
+        continue;
+      }
+
+      // Assign tree
+      tree.investor = investor._id;
+      tree.investorName = investor.name;
+      tree.investorId = investor.investorId;
+      await tree.save();
+
+      // Add to investor
+      if (!investor.investedTrees.some(t => t.tree.toString() === treeId)) {
+        investor.investedTrees.push({
+          tree: tree._id,
+          treeId: tree.treeId
+        });
+      }
+
+      results.assigned.push(tree.treeId);
+    }
+
+    await investor.save();
+
+    res.json({
+      success: true,
+      message: `Assigned ${results.assigned.length} trees successfully`,
+      data: results
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ========================================
+// INVESTOR STATISTICS
+// ========================================
 exports.getInvestorStats = async (req, res) => {
   try {
-    console.log('📡 GET /api/investors/stats/overview');
+    const totalInvestors = await Investor.countDocuments();
+    const activeInvestors = await Investor.countDocuments({ status: 'active' });
 
-    const totalInvestors = await Investor.countDocuments({ isDeleted: false });
-    const activeInvestors = await Investor.countDocuments({ status: 'active', isDeleted: false });
-    
-    const investorData = await Investor.aggregate([
-      { $match: { isDeleted: false } },
+    const investmentAgg = await Investor.aggregate([
       {
         $group: {
           _id: null,
-          totalInvestment: { $sum: '$investment.totalInvestment' },
-          totalInvested: { $sum: '$investment.investedAmount' },
-          totalAvailable: { $sum: '$investment.availableBalance' }
+          totalInvestment: { $sum: '$investment' }
         }
       }
     ]);
 
     const assignedTrees = await Tree.countDocuments({ investor: { $ne: null } });
-    const availableTrees = await Tree.countDocuments({ investor: null });
+    const availableTrees = await Tree.countDocuments({
+      $or: [{ investor: null }, { investor: { $exists: false } }]
+    });
 
     res.status(200).json({
       success: true,
@@ -610,85 +473,15 @@ exports.getInvestorStats = async (req, res) => {
         totalInvestors,
         activeInvestors,
         inactiveInvestors: totalInvestors - activeInvestors,
-        totalInvestment: investorData[0]?.totalInvestment || 0,
-        totalInvested: investorData[0]?.totalInvested || 0,
-        totalAvailable: investorData[0]?.totalAvailable || 0,
+        totalInvestment: investmentAgg[0]?.totalInvestment || 0,
         assignedTrees,
         availableTrees
       }
     });
   } catch (error) {
-    console.error('❌ Error fetching investor stats:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch investor statistics',
-      error: error.message
+      message: error.message
     });
   }
 };
-
-/**
- * Get investor performance metrics
- */
-exports.getInvestorPerformance = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    console.log(`📡 GET /api/investors/${id}/performance`);
-
-    const investor = await Investor.findById(id)
-      .populate({
-        path: 'investedTrees.tree',
-        select: 'treeId healthStatus lifecycleStatus inoculationCount harvestData'
-      });
-
-    if (!investor || investor.isDeleted) {
-      return res.status(404).json({
-        success: false,
-        message: 'Investor not found'
-      });
-    }
-
-    const activeTrees = investor.investedTrees.filter(inv => inv.status === 'active');
-    
-    const performance = {
-      totalTrees: activeTrees.length,
-      healthyTrees: activeTrees.filter(inv => inv.tree?.healthStatus === 'Healthy').length,
-      harvestedTrees: activeTrees.filter(inv => inv.tree?.lifecycleStatus === 'Harvested').length,
-      readyForHarvest: activeTrees.filter(inv => inv.tree?.lifecycleStatus === 'Ready for Harvest').length,
-      totalResinYield: activeTrees.reduce((sum, inv) => {
-        return sum + (inv.tree?.harvestData?.resinYield || 0);
-      }, 0),
-      averageTreeAge: calculateAverageAge(activeTrees),
-      investmentUtilization: (investor.investment.investedAmount / investor.investment.totalInvestment * 100).toFixed(2)
-    };
-
-    res.status(200).json({
-      success: true,
-      data: performance
-    });
-  } catch (error) {
-    console.error('❌ Error fetching investor performance:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch investor performance',
-      error: error.message
-    });
-  }
-};
-
-// Helper function to calculate average tree age
-function calculateAverageAge(investments) {
-  if (investments.length === 0) return 0;
-  
-  const totalMonths = investments.reduce((sum, inv) => {
-    if (!inv.tree?.plantedDate) return sum;
-    const planted = new Date(inv.tree.plantedDate);
-    const now = new Date();
-    const months = (now.getFullYear() - planted.getFullYear()) * 12 + 
-                   (now.getMonth() - planted.getMonth());
-    return sum + months;
-  }, 0);
-  
-  return Math.round(totalMonths / investments.length);
-}

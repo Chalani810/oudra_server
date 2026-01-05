@@ -52,7 +52,7 @@ app.get("/", (req, res) => {
       investors: "/api/investors",
       trees: "/api/trees",
       blockchain: "/api/blockchain",
-      certificates: "/api/certificates" // ✅ UNCOMMENTED
+      certificates: "/api/certificates"
     }
   });
 });
@@ -81,7 +81,7 @@ app.get("/api/docs", (req, res) => {
       "POST /api/trees/:treeId/observations": "Add observation",
       "GET /api/trees/:treeId/history": "Get tree history",
       
-      // Certificate Management - ✅ UNCOMMENTED
+      // Certificate Management
       "POST /api/certificates/generate": "Generate certificate",
       "POST /api/certificates/harvest": "Generate harvest certificate",
       "GET /api/certificates/investor/:investorId": "Get investor certificates",
@@ -122,11 +122,11 @@ app.use("/uploads", express.static(path.join(__dirname, "app/uploads")));
 // 1. BLOCKCHAIN & INVESTOR ROUTES
 const investorRoutes = require("./app/routes/investorRoutes");
 const blockchainRoutes = require("./app/routes/blockchainRoutes");
-const certificateRoutes = require("./app/routes/certificateRoutes"); // ✅ UNCOMMENTED
+const certificateRoutes = require("./app/routes/certificateRoutes");
 
 app.use("/api/investors", investorRoutes);
 app.use("/api/blockchain", blockchainRoutes);
-app.use("/api/certificates", certificateRoutes); // ✅ UNCOMMENTED
+app.use("/api/certificates", certificateRoutes);
 
 // 2. TREE MANAGEMENT ROUTES
 const treeRoutes = require('./app/routes/treeRoutes');
@@ -216,7 +216,7 @@ app.listen(PORT, () => {
   console.log(`   🌴 GET/POST Trees:     http://localhost:${PORT}/api/trees`);
   console.log(`   📝 Observations:       http://localhost:${PORT}/api/trees/:treeId/observations`);
   console.log(`   📜 History:            http://localhost:${PORT}/api/trees/:treeId/history`);
-  console.log(`\n🏆 CERTIFICATES:`); // ✅ UNCOMMENTED
+  console.log(`\n🏆 CERTIFICATES:`);
   console.log(`   📄 Generate:           http://localhost:${PORT}/api/certificates/generate`);
   console.log(`   🌾 Harvest Cert:       http://localhost:${PORT}/api/certificates/harvest`);
   console.log(`   👤 Investor Certs:     http://localhost:${PORT}/api/certificates/investor/:id`);

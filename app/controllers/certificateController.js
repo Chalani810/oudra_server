@@ -1,196 +1,338 @@
-// path: controllers/certificateController.js
-const Tree = require('../models/TreeModel');
-const Investor = require('../models/Investor');
+// app/controllers/certificateController.js
+const crypto = require("crypto");
+const Tree = require("../models/TreeModel");
+const Investor = require("../models/Investor");
+const Certificate = require("../models/Certificate");
+const blockchainService = require("../services/blockchain.service");
 
-/**
- * GENERATE HARVEST CERTIFICATE
- */
+// ========================================
+// GET HARVESTED TREES FOR CERTIFICATE MODAL
+// ========================================
+exports.getHarvestableTreesByInvestor = async (req, res) => {
+  try {
+    const { investorId } = req.params;
+
+    const investor = await Investor.findById(investorId);
+    if (!investor) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Investor not found" });
+    }
+
+    const trees = await Tree.find({
+      investor: investor._id,
+      lifecycleStatus: "Harvested",
+    }).sort({ treeId: 1 });
+
+    res.json({ success: true, count: trees.length, data: trees });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ========================================
+// GET INVESTOR CERTIFICATES
+// ========================================
+exports.getInvestorCertificates = async (req, res) => {
+  try {
+    const investor = await Investor.findById(req.params.investorId).populate({
+      path: "certificates.certificate",
+      populate: { path: "tree", select: "treeId block lifecycleStatus" },
+    });
+
+    if (!investor) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Investor not found" });
+    }
+
+    res.json({ success: true, data: investor.certificates });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ========================================
+// GET CERTIFICATE BY ID
+// ========================================
+exports.getCertificate = async (req, res) => {
+  try {
+    const certificate = await Certificate.findOne({
+      certificateId: req.params.certificateId,
+    })
+      .populate("investor", "name email phone investorId")
+      .populate("tree", "treeId block lifecycleStatus");
+
+    if (!certificate) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Certificate not found" });
+    }
+
+    res.json({ success: true, data: certificate });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 exports.generateHarvestCertificate = async (req, res) => {
   try {
     const { treeId } = req.body;
 
-    // Get tree with all details
-    const tree = await Tree.findOne({ treeId })
-      .populate('investor', 'name email phone investment status');
+    const tree = await Tree.findById(treeId).populate(
+      "investor",
+      "investorId name email phone"
+    );
 
-    if (!tree) {
-      return res.status(404).json({
-        success: false,
-        error: 'Tree not found'
-      });
+    if (!tree || !tree.investor) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid tree or investor" });
     }
 
-    // Verify tree has investor
-    if (!tree.investor) {
-      return res.status(400).json({
-        success: false,
-        error: 'Tree is not assigned to any investor'
-      });
+    if (tree.lifecycleStatus !== "Harvested") {
+      return res
+        .status(400)
+        .json({ success: false, error: "Tree not harvested yet" });
     }
 
-    // Verify tree is harvested
-    if (tree.lifecycleStatus !== 'Harvested') {
-      return res.status(400).json({
-        success: false,
-        error: 'Tree must be harvested before generating certificate'
-      });
-    }
-
-    // Verify certificate not already generated
-    if (tree.harvestData?.certificateGenerated) {
-      return res.status(400).json({
-        success: false,
-        error: 'Certificate already generated for this tree'
-      });
-    }
-
-    // Generate certificate data
-    const certificateId = `CERT-${tree.treeId}-${Date.now().toString().slice(-6)}`;
-    
-    const certificateData = {
-      certificateId,
-      issueDate: new Date(),
-      validUntil: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year validity
-      type: 'HARVEST',
-      status: 'ACTIVE',
-      verificationUrl: `${process.env.BASE_URL}/verify/${certificateId}`,
-      
-      investor: {
-        id: tree.investor._id,
-        name: tree.investor.name,
-        email: tree.investor.email,
-        phone: tree.investor.phone,
-        investment: tree.investor.investment
-      },
-      
-      tree: {
-        treeId: tree.treeId,
-        nfcTagId: tree.nfcTagId,
-        block: tree.block,
-        plantedDate: tree.plantedDate,
-        harvestedAt: tree.harvestData?.harvestedAt || new Date(),
-        ageAtHarvest: calculateTreeAge(tree.plantedDate, tree.harvestData?.harvestedAt),
-        healthStatus: tree.healthStatus,
-        lifecycleStatus: tree.lifecycleStatus,
-        inoculationCount: tree.inoculationCount,
-        gps: tree.gps,
-        lastInspection: tree.lastInspection,
-        inspectedBy: tree.inspectedBy
-      },
-      
-      harvestDetails: {
-        harvestNotes: tree.harvestData?.harvestNotes,
-        resinYield: tree.harvestData?.resinYield,
-        qualityGrade: tree.harvestData?.qualityGrade,
-        harvestedBy: tree.harvestData?.harvestedBy || 'System'
-      },
-      
-      verification: {
-        blockchainHash: generateBlockchainHash(certificateId),
-        issuedBy: process.env.COMPANY_NAME || 'OUDRA System',
-        inspectorSignature: generateDigitalSignature(),
-        timestamp: new Date().toISOString()
-      }
-    };
-
-    // Save certificate to investor
-    const investor = await Investor.findById(tree.investor._id);
-    investor.certificates.push({
-      certificateId,
-      treeId: tree.treeId,
-      issueDate: new Date(),
-      type: 'HARVEST',
-      status: 'ACTIVE',
-      data: certificateData
+    const existing = await Certificate.findOne({
+      tree: tree._id,
+      type: "HARVEST",
+      status: "ACTIVE",
     });
-    await investor.save();
 
-    // Mark tree as certificate generated
-    tree.harvestData = {
-      ...tree.harvestData,
-      certificateGenerated: true,
+    if (existing) {
+      return res.status(200).json({
+        success: true,
+        alreadyExists: true,
+        message: "Certificate already exists",
+        data: {
+          certificateId: existing.certificateId,
+        },
+      });
+    }
+
+    const certificateId = `HAR-${tree.treeId}-${Date.now()
+      .toString()
+      .slice(-6)}`;
+
+    const certificate = new Certificate({
       certificateId,
-      certificateGeneratedAt: new Date()
-    };
-    await tree.save();
-
-    res.json({
-      success: true,
-      message: 'Certificate generated successfully',
+      investor: tree.investor._id,
+      tree: tree._id,
+      type: "HARVEST",
+      status: "ACTIVE",
+      issueDate: new Date(),
+      issuedBy: "Admin",
       data: {
-        certificate: certificateData,
-        downloadUrl: `${API_URL}/certificates/${certificateId}/download`,
-        previewUrl: `${API_URL}/certificates/${certificateId}/preview`
-      }
+        treeId: tree.treeId,
+        block: tree.block,
+        harvestData: tree.harvestData,
+        investor: {
+          investorId: tree.investor.investorId,
+          name: tree.investor.name,
+        },
+      },
+      qrCodeUrl: `${
+        process.env.BASE_URL || "http://localhost:3000"
+      }/certificates/${certificateId}`,
     });
 
-  } catch (error) {
-    console.error('Generate certificate error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
+    await certificate.save();
+
+    // 🔗 SIMPLE BLOCKCHAIN REGISTRATION (VIVA READY)
+    const tx = await blockchainService.issueCertificate(
+      certificateId,
+      process.env.ADMIN_WALLET || "0x1Be31A94361a391bBaFB2a4CCd704F57dc04d4bb",
+      "HARVEST_CERTIFICATE"
+    );
+
+    certificate.blockchain = {
+      onChain: true,
+      txHash: tx.transactionHash,
+      blockNumber: tx.blockNumber,
+      wallet: process.env.ADMIN_WALLET,
+      registeredAt: new Date(),
+    };
+
+    await certificate.save();
+
+    await Investor.findByIdAndUpdate(tree.investor._id, {
+      $push: { certificates: { certificate: certificate._id } },
     });
+
+    res.status(201).json({
+      success: true,
+      message: "Harvest certificate generated & blockchain verified",
+      data: certificate,
+    });
+  } catch (error) {
+    console.error("❌ Harvest certificate error:", error);
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
-/**
- * GET CERTIFICATE BY ID
- */
-exports.getCertificate = async (req, res) => {
+exports.getHarvestCertificate = async (req, res) => {
   try {
     const { certificateId } = req.params;
 
-    // Find investor with this certificate
-    const investor = await Investor.findOne({
-      'certificates.certificateId': certificateId
-    });
+    const certificate = await Certificate.findOne({
+      certificateId: certificateId,
+    })
+      .populate("investor", "name email")
+      .populate("tree", "treeId block lifecycleStatus");
 
-    if (!investor) {
+    if (!certificate) {
       return res.status(404).json({
         success: false,
-        error: 'Certificate not found'
+        error: "Harvest certificate not found for this investor and tree",
       });
     }
 
-    const certificate = investor.certificates.find(
-      cert => cert.certificateId === certificateId
-    );
-
     res.json({
       success: true,
-      data: certificate
+      verified: certificate.blockchain?.onChain === true,
+      data: certificate,
     });
   } catch (error) {
-    console.error('Get certificate error:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
     });
   }
 };
 
-// Helper functions
-function calculateTreeAge(plantedDate, harvestedDate) {
-  const planted = new Date(plantedDate);
-  const harvested = new Date(harvestedDate || new Date());
-  
-  let years = harvested.getFullYear() - planted.getFullYear();
-  let months = harvested.getMonth() - planted.getMonth();
-  
-  if (months < 0) {
-    years--;
-    months += 12;
+// ========================================
+// VERIFY CERTIFICATE (DB + BLOCKCHAIN FLAG)
+// ========================================
+exports.verifyCertificate = async (req, res) => {
+  try {
+    const certificate = await Certificate.findOne({
+      certificateId: req.params.certificateId,
+    })
+      .populate("investor", "name email")
+      .populate("tree", "treeId block lifecycleStatus");
+
+    if (!certificate) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Certificate not found" });
+    }
+
+    res.json({
+      success: true,
+      verified: certificate.blockchain?.onChain === true,
+      data: certificate,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
-  
-  return `${years} years ${months} months`;
-}
+};
+/**
+ * GET /api/certificates/:certificateId/details
+ * Returns a single cleaned certificate object
+ */
+exports.getHarvestCertificateDetails = async (req, res) => {
+  try {
+    const { certificateId } = req.params;
 
-function generateBlockchainHash(data) {
-  // In production, use a real blockchain library
-  return `0x${Buffer.from(JSON.stringify(data)).toString('hex').slice(0, 64)}`;
-}
+    const certificate = await Certificate.findOne({ certificateId })
+      .populate({
+        path: "investor",
+        select: "investorId name email phone investment status",
+      })
+      .populate({
+        path: "tree",
+        select: `
+          treeId block plantedDate
+          healthStatus lifecycleStatus
+          harvestData gps
+          blockchain
+        `,
+      })
+      .lean();
 
-function generateDigitalSignature() {
-  // In production, use proper digital signature
-  return `SIG-${Date.now().toString(36).toUpperCase()}`;
-}
+    if (!certificate) {
+      return res.status(404).json({
+        success: false,
+        message: "Certificate not found",
+      });
+    }
+
+    // ===============================
+    // CLEAN & NORMALIZE RESPONSE
+    // ===============================
+    const response = {
+      certificate: {
+        certificateId: certificate.certificateId,
+        certificateNumber: certificate.certificateNumber,
+        type: certificate.type,
+        status: certificate.status,
+        issueDate: certificate.issueDate,
+        issuedBy: certificate.issuedBy,
+        qrCodeUrl: certificate.qrCodeUrl,
+      },
+
+      investor: certificate.investor
+        ? {
+            investorId: certificate.investor.investorId,
+            name: certificate.investor.name,
+            email: certificate.investor.email,
+            phone: certificate.investor.phone,
+            investment: certificate.investor.investment,
+            status: certificate.investor.status,
+          }
+        : null,
+
+      tree: certificate.tree
+        ? {
+            treeId: certificate.tree.treeId,
+            block: certificate.tree.block,
+            plantedDate: certificate.tree.plantedDate,
+            lifecycleStatus: certificate.tree.lifecycleStatus,
+            healthStatus: certificate.tree.healthStatus,
+
+            harvest: {
+              resinYield: certificate.tree.harvestData?.resinYield || 0,
+              qualityGrade: certificate.tree.harvestData?.qualityGrade || "N/A",
+              harvestedBy: certificate.tree.harvestData?.harvestedBy,
+              harvestedAt: certificate.tree.harvestData?.harvestedAt,
+            },
+
+            location: certificate.tree.gps,
+          }
+        : null,
+
+      blockchain: {
+        onChain: certificate.blockchain?.onChain || false,
+        transactionHash: certificate.blockchain?.transactionHash || null,
+        blockNumber: certificate.blockchain?.blockNumber || null,
+        network: certificate.blockchain?.network || null,
+        verifiedAt: certificate.blockchain?.lastVerifiedAt || null,
+        verificationCount: certificate.blockchain?.verificationCount || 0,
+        isRevoked: certificate.blockchain?.isRevoked || false,
+      },
+
+      verification: {
+        isValid:
+          certificate.blockchain?.onChain === true &&
+          certificate.blockchain?.isRevoked !== true,
+        verificationUrl: certificate.qrCodeUrl,
+      },
+    };
+
+    return res.json({
+      success: true,
+      data: response,
+    });
+  } catch (error) {
+    console.error("❌ Certificate details error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load certificate details",
+    });
+  }
+};
+
+module.exports = exports;

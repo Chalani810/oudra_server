@@ -10,6 +10,13 @@ router.put('/trees/:treeId', treeController.updateTree);
 router.delete('/trees/:treeId', treeController.deleteTree);
 router.put('/trees/:treeId/profile', treeController.updateTreeProfile);
 
+// ===== ✅ NEW: TREE-INVESTOR MANAGEMENT =====
+// Get trees by investor ID
+router.get('/trees/by-investor/:investorId', treeController.getTreesByInvestorId);
+
+// ✅ NEW: Bulk update tree investors (assign/unassign multiple trees)
+router.post('/trees/bulk-update-investors', treeController.bulkUpdateTreeInvestors);
+
 // ===== SPECIALIZED UPDATES =====
 router.put('/trees/:treeId/inspection', treeController.updateInspection);
 router.put('/trees/:treeId/lifecycle', treeController.updateLifecycle);
