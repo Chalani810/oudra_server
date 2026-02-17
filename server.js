@@ -1,4 +1,3 @@
-//path: oudra-server(same backend for web & mobile apps)/server.js
 const express = require("express");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
@@ -27,6 +26,9 @@ const predictionRoutes = require('./app/routes/predictionRoutes');
 const treeRoutes = require('./app/routes/treeRoutes');
 const syncRoutes = require('./app/routes/syncRoutes');
 
+
+const iotRoutes = require('./app/routes/iotRoutes');
+
 // Blockchain routes
 const investorRoutes = require("./app/routes/investorRoutes");
 const blockchainRoutes = require("./app/routes/blockchainRoutes");
@@ -41,7 +43,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: "*", // Allowing ALL origins during development
+  origin: "*",
   credentials: true
 }));
 app.use(express.json());
@@ -71,7 +73,8 @@ app.get("/", (req, res) => {
     endpoints: {
       investors: "/api/investors",
       blockchain: "/api/blockchain/chain",
-      verify: "/api/blockchain/verify"
+      verify: "/api/blockchain/verify",
+      sensor: "/api/sensor"
     }
   });
 });
@@ -135,20 +138,20 @@ app.use("/order_report", order_reportRoutes);
 app.use("/product_report", productreportRoutes);
 app.use("/customer_report", customerReportRoutes);
 app.use("/predict", predictionRoutes);
-
-// Oudra project routes
-app.use("/employee", employeeRoutes);
 app.use('/api', treeRoutes);
 app.use('/api', syncRoutes);
+app.use('/api', iotRoutes);
 
 // Blockchain routes
 app.use("/api/investors", investorRoutes);
 app.use("/api/blockchain", blockchainRoutes);
 
+// Oudra project routes
+app.use("/employee", employeeRoutes);
+
 // Task routes
 app.use("/api/tasks", taskRoutes);
 
-// ===== 404 HANDLER - MUST BE AFTER ALL ROUTES =====
 app.use((req, res) => {
   res.status(404).json({ 
     success: false, 
@@ -169,22 +172,7 @@ app.use((err, req, res, next) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`\n🚀 Server running on http://localhost:${PORT}`);
-  console.log(`\n📊 Blockchain API Endpoints:`);
-  console.log(`   GET    http://localhost:${PORT}/api/investors`);
-  console.log(`   POST   http://localhost:${PORT}/api/investors`);
-  console.log(`   GET    http://localhost:${PORT}/api/investors/:id`);
-  console.log(`   PUT    http://localhost:${PORT}/api/investors/:id`);
-  console.log(`   DELETE http://localhost:${PORT}/api/investors/:id`);
-  console.log(`   GET    http://localhost:${PORT}/api/blockchain/chain`);
-  console.log(`   GET    http://localhost:${PORT}/api/blockchain/verify`);
-  console.log(`   GET    http://localhost:${PORT}/api/blockchain/audit/:investorId`);
-  console.log(`   GET    http://localhost:${PORT}/api/blockchain/block/:index`);
-  console.log(`\n🌳 Oudra API Endpoints:`);
-  console.log(`   GET    http://localhost:${PORT}/api/trees`);
-  console.log(`   POST   http://localhost:${PORT}/api/trees`);
-  console.log(`   GET    http://localhost:${PORT}/api/tasks`);
-  console.log(`   POST   http://localhost:${PORT}/api/tasks`);
-  console.log(`   GET    http://localhost:${PORT}/employee`);
+
 });
 
 // Graceful shutdown
