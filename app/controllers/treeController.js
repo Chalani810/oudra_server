@@ -861,34 +861,81 @@ exports.updateNFCTag = async (req, res) => {
 // Update GPS coords - UPDATED: Now mobile-only endpoint
 exports.updateGPS = async (req, res) => {
   try {
+    console.log('========================================');
+    console.log('🌍 GPS UPDATE REQUEST RECEIVED');
+    console.log('========================================');
+    console.log('Tree ID:', req.params.treeId);
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('Request headers:', JSON.stringify(req.headers, null, 2));
+    console.log('Timestamp:', new Date().toISOString());
+    
     const { gps, updatedBy } = req.body;
+    
+    // Validate GPS data
     if (!gps || typeof gps.lat !== 'number' || typeof gps.lng !== 'number') {
+      console.log('❌ Invalid GPS data:', gps);
       return res.status(400).json({ message: 'gps { lat, lng } required' });
     }
-
+    
+    console.log('✅ GPS data validated:', gps);
+    console.log('   Latitude:', gps.lat);
+    console.log('   Longitude:', gps.lng);
+    
+    // Find tree first to see current GPS
+    const existingTree = await Tree.findOne({ treeId: req.params.treeId }).lean().exec();
+    if (!existingTree) {
+      console.log('❌ Tree not found:', req.params.treeId);
+      return res.status(404).json({ message: 'Tree not found' });
+    }
+    
+    console.log('📍 Current GPS in DB:', existingTree.gps);
+    console.log('📍 New GPS to save:', gps);
+    
+    // Update tree
     const tree = await Tree.findOneAndUpdate(
       { treeId: req.params.treeId },
-      { gps, lastUpdatedBy: updatedBy || null, updatedAt: new Date(), lastUpdatedAt: new Date() },
+      { 
+        gps, 
+        lastUpdatedBy: updatedBy || null, 
+        updatedAt: new Date(), 
+        lastUpdatedAt: new Date() 
+      },
       { new: true }
     ).exec();
 
-    if (!tree) return res.status(404).json({ message: 'Tree not found' });
-
+    console.log('✅ Tree updated in DB');
+    console.log('   Updated GPS:', tree.gps);
+    
+    // Verify the update
+    const verifyTree = await Tree.findOne({ treeId: req.params.treeId }).lean().exec();
+    console.log('🔍 Verification - GPS in DB after update:', verifyTree.gps);
+    
     // Add to history
     const history = new TreeHistory({
       treeId: req.params.treeId,
       actionType: 'ManualEdit',
+      oldValue: { gps: existingTree.gps },
       newValue: { gps },
       changedBy: updatedBy,
-      notes: 'GPS coordinates updated via mobile app',
+      notes: `GPS coordinates updated via mobile app from (${existingTree.gps.lat}, ${existingTree.gps.lng}) to (${gps.lat}, ${gps.lng})`,
       timestamp: new Date(),
       device: 'mobile'
     });
     await history.save();
+    console.log('✅ History entry created');
+    
+    console.log('========================================');
+    console.log('✅ GPS UPDATE COMPLETED SUCCESSFULLY');
+    console.log('========================================');
 
     return res.json(tree);
   } catch (err) {
-    console.error('updateGPS error:', err);
+    console.error('========================================');
+    console.error('❌ GPS UPDATE ERROR');
+    console.error('========================================');
+    console.error('Error:', err);
+    console.error('Stack:', err.stack);
+    console.error('========================================');
     return res.status(500).json({ message: err.message });
   }
 };
