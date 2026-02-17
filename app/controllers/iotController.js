@@ -1,48 +1,70 @@
 const axios = require('axios');
 const SensorData = require('../models/SensorData');
 
-// Ensure this IP matches your Arduino Serial Monitor output
-const ESP32_IP = 'http://10.140.243.52'; 
+const ESP32_IP = 'http://10.128.240.52'; 
+
+const calculateStatus = (ph, temp, moisture, humidity) => {
+    // 1. Check CRITICAL conditions
+    // (Note: pH is only checked if it is > 0)
+    if (
+        (ph > 0 && (ph < 3.8 || ph > 6.5)) ||
+        (temp < 20 || temp > 45) ||
+        (moisture < 40 || moisture > 85) ||
+        (humidity < 20 || humidity > 80)
+    ) {
+        return 'Critical';
+    }
+
+    // 2. Check WARNING conditions
+    if (
+        (ph > 0 && ((ph >= 3.8 && ph < 4.5) || (ph > 6.0 && ph <= 6.5))) ||
+        (temp >= 20 && temp < 25) || (temp > 40 && temp <= 45) ||
+        (moisture >= 40 && moisture < 50) || (moisture > 75 && moisture <= 85) ||
+        (humidity >= 20 && humidity < 40) || (humidity > 65 && humidity <= 80)
+    ) {
+        return 'Warning';
+    }
+
+    return 'Normal';
+};
 
 const iotController = {
     async syncData(req, res) {
         try {
             const { treeId } = req.params;
-            const { manualPh } = req.body; // Received from Mobile App
+            const { manualPh } = req.body; 
 
-            console.log(`📡 Contacting ESP32 for tree ${treeId}...`);
-
-            // 1. Get data from ESP32
             const response = await axios.get(`${ESP32_IP}/data`, { timeout: 8000 });
             const iot = response.data;
 
-            // 2. Map Arduino names to MongoDB names
-            // Arduino sends "soil_moisture", but we store as "soilMoisture"
+            // Use 0 as default if no pH provided
+            const currentPh = manualPh || 0; 
+            const status = calculateStatus(currentPh, iot.temperature, iot.soil_moisture, iot.humidity);
+
             const newReading = new SensorData({
                 treeId: treeId,
                 temperature: iot.temperature,
                 humidity: iot.humidity,
                 soilMoisture: iot.soil_moisture, 
-                soilPh: manualPh || null,
-                overallStatus: 'Normal'
+                soilPh: currentPh,
+                overallStatus: status
             });
 
-            // 3. Save to MongoDB
+            console.log(newReading);
+
             const savedData = await newReading.save();
-            console.log("✅ Data saved to MongoDB:", savedData);
-
-            res.status(200).json({
-                success: true,
-                message: "Data synced and stored successfully",
-                data: savedData
-            });
-
+            res.status(200).json({ success: true, data: savedData });
         } catch (error) {
-            console.error("❌ Sync Error:", error.message);
-            res.status(500).json({ 
-                success: false, 
-                error: "Failed to connect to IoT device or Database." 
-            });
+            res.status(500).json({ success: false, error: "IoT Device Offline" });
+        }
+    },
+
+    async getAll(req, res) {
+        try {
+            const data = await SensorData.find().sort({ recordedAt: -1 });
+            res.json({ success: true, data });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
         }
     },
 
@@ -50,12 +72,7 @@ const iotController = {
         try {
             const { treeId } = req.params;
             const data = await SensorData.findOne({ treeId }).sort({ recordedAt: -1 });
-            
-            if (!data) {
-                return res.json({ success: true, hasData: false });
-            }
-
-            res.json({ success: true, hasData: true, data });
+            res.json({ success: true, data });
         } catch (error) {
             res.status(500).json({ success: false, error: error.message });
         }
