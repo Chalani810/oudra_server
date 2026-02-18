@@ -149,7 +149,6 @@ app.use("/resin", resinRoutes);
 app.use((req, res) => {
   res.status(404).json({ error: "Route not found" });
 });
-app.use("/predict", predictionRoutes);
 app.use('/api', treeRoutes);
 app.use('/api', syncRoutes);
 app.use('/api', iotRoutes);
