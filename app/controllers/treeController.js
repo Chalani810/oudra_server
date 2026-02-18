@@ -284,6 +284,7 @@ exports.createTree = async (req, res) => {
 
 // Getting all trees (with optional filters)
 exports.getAllTrees = async (req, res) => {
+  
   try {
     const filter = {};
     if (req.query.block) filter.block = req.query.block;

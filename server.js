@@ -145,10 +145,6 @@ app.use("/customer_report", customerReportRoutes);
 
 app.use("/resin", resinRoutes);
 
-// Optional catch-all for undefined routes
-app.use((req, res) => {
-  res.status(404).json({ error: "Route not found" });
-});
 app.use('/api', treeRoutes);
 app.use('/api', syncRoutes);
 app.use('/api', iotRoutes);
