@@ -22,7 +22,7 @@ const reportRoutes = require("./app/routes/reportRoutes");
 const productreportRoutes = require("./app/routes/productreportRoutes");
 const customerReportRoutes = require("./app/routes/customer_reportRoutes");
 
-const resinDetectionRoutes = require("./app/routes/resinDetectionRoutes");
+// const resinDetectionRoutes = require("./app/routes/resinDetectionRoutes");
 
 const resinRoutes = require("./app/routes/resinRoutes");
 
