@@ -1,4 +1,4 @@
-//path:oudra-server(same backend for web & mobile apps)/app/controllers/treeController.js
+
 const Tree = require('../models/TreeModel');
 const AutoIncrementTreeIdCount = require('../models/AutoIncrementTreeIdCount');
 const Observation = require('../models/Observations');
@@ -587,6 +587,81 @@ exports.mobileUpdateTree = async (req, res) => {
     if (gps) updates.gps = gps;
 
     // Apply auto lifecycle logic - CRITICAL: Override any mobile-sent lifecycleStatus
+    const lifecycleUpdates = autoUpdateLifecycleStatus(tree.toObject(), updates);
+    Object.assign(updates, lifecycleUpdates);
+
+    // Update the tree
+    Object.assign(tree, updates);
+    await tree.save();
+
+    // Add to tree history
+    const history = new TreeHistory({
+      treeId,
+      actionType: 'ManualEdit',
+      newValue: updates,
+      changedBy: observedBy || 'field-worker',
+      notes: notes || 'Tree updated via mobile app',
+      timestamp: new Date(),
+      device: 'mobile'
+    });
+    await history.save();
+
+    // If NFC was assigned/unassigned, add specific history entry
+    if (nfcTagId !== undefined) {
+      const nfcHistory = new TreeHistory({
+        treeId,
+        actionType: 'ManualEdit',
+        newValue: { nfcTagId },
+        changedBy: observedBy || 'field-worker',
+        notes: nfcTagId ? `NFC tag ${nfcTagId} assigned` : 'NFC tag unassigned',
+        timestamp: new Date(),
+        device: 'mobile'
+      });
+      await nfcHistory.save();
+    }
+    
+    return res.json(tree);
+  } catch (err) {
+    console.error('mobileUpdateTree error:', err);
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// Mobile app endpoint for field worker updates - NEW FUNCTION
+exports.mobileUpdateTree = async (req, res) => {
+  try {
+    const { treeId } = req.params;
+    const { 
+      nfcTagId,
+      healthStatus, 
+      lifecycleStatus, 
+      inoculationCount,
+      gps,
+      observedBy,
+      notes 
+    } = req.body;
+
+    const tree = await Tree.findOne({ treeId }).exec();
+    if (!tree) return res.status(404).json({ message: 'Tree not found' });
+
+    const updates = {
+      lastUpdatedAt: new Date(),
+      updatedAt: new Date(),
+      lastUpdatedBy: observedBy || 'field-worker'
+    };
+
+    // Field workers can update these fields:
+    if (nfcTagId !== undefined) {
+      updates.nfcTagId = nfcTagId;
+      updates.offlineUpdated = true;
+    }
+    
+    if (healthStatus) updates.healthStatus = healthStatus;
+    if (lifecycleStatus) updates.lifecycleStatus = lifecycleStatus;
+    if (inoculationCount !== undefined) updates.inoculationCount = inoculationCount;
+    if (gps) updates.gps = gps;
+
+    // Apply auto lifecycle logic
     const lifecycleUpdates = autoUpdateLifecycleStatus(tree.toObject(), updates);
     Object.assign(updates, lifecycleUpdates);
 

@@ -9,7 +9,7 @@ const CartSchema = new mongoose.Schema({
   eventId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Event",
-    default: null
+    default: null 
   },
   items: {
     type: [{
