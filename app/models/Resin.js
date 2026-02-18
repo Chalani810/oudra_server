@@ -37,7 +37,7 @@ const WorkflowLogSchema = new mongoose.Schema({
 
 const ResinAnalysisSchema = new mongoose.Schema({
   treeId: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: "Tree",
     required: true,
   },

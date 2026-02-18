@@ -1,31 +1,49 @@
 const express = require("express");
 const router = express.Router();
 
+
 const {
   addResinAnalysis,
   getAllResinAnalysis,
   getResinById,
   getResinByTreeId,
   updateResinStatus,
-  addWorkflowLog
+  addWorkflowLog,
+  uploadResinImage, // This now contains the AI logic
+  getLatestWorkflowLogByTreeId,
+
 } = require("../controllers/resin_controller");
 
-// Create resin analysis
+
+// 1. Create initial record (POST /resin/)
 router.post("/", addResinAnalysis);
 
-// Get all resin records
+const multer = require('multer');
+// Use memoryStorage so imageFile.buffer is available for your AI server call
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
+
+// The string 'file' MUST match your React Native formData.append("file", ...)
+router.post('/upload-image', upload.single('file'), uploadResinImage);
+
+// --- DATA RETRIEVAL ---
+
+// Get all records (GET /resin/)
 router.get("/", getAllResinAnalysis);
 
-// Get single resin record by DB ID
+// Get by DB ID (GET /resin/record/:id)
 router.get("/record/:id", getResinById);
 
-// Get resin analysis list by Tree ID
+// Get by Tree ID (GET /resin/tree/:treeId)
 router.get("/tree/:treeId", getResinByTreeId);
 
-// Update resin status
+router.get('/tree/:treeId/latest-workflow', getLatestWorkflowLogByTreeId);
+
+
+// Update status manually (PATCH /resin/:id/status)
 router.patch("/:id/status", updateResinStatus);
 
-// Add workflow log entry
+// Add manual log entry (POST /resin/:id/workflow-log)
 router.post("/:id/workflow-log", addWorkflowLog);
 
 module.exports = router;

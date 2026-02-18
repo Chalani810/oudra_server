@@ -1,4 +1,4 @@
-
+//path:oudra-server(common backend)/app/models/TreeModel.js
 const mongoose = require('mongoose');
 
 const GpsSchema = new mongoose.Schema({
@@ -15,17 +15,15 @@ const TreeSchema = new mongoose.Schema({
   investorName: { type: String, default: null },
   block: { type: String, default: null },
   gps: { type: GpsSchema, required: true },
-  healthStatus: { type: String, enum: ['Healthy', 'Warning', 'Damaged', 'Dead'], default: 'Healthy' },
+  healthStatus: { 
+    type: String, 
+    enum: ['Healthy', 'Warning', 'Damaged', 'Dead'], 
+    default: 'Healthy' 
+  },
   lastInspection: { type: Date, default: null },
   inspectedBy: { type: String, default: null },
   lastUpdatedAt: { type: Date, default: Date.now },
   lastUpdatedBy: { type: String, default: null },
-  isArchived: { type: Boolean, default: false },
-  treeImageUrl: { type: String, default: '' },
-  offlineUpdated: { type: Boolean, default: false },
-  updatedAt: { type: Date, default: Date.now },
-
-  // Lifecycle fields
   offlineUpdated: { type: Boolean, default: false },
   lifecycleStatus: {
     type: String,
