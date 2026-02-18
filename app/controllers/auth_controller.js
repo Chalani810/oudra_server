@@ -1,3 +1,4 @@
+//oudra-server(common backend)/app/controllers/auth_controller.js
 const User = require("../models/User");
 const Checkout = require("../models/Checkout");
 const jwt = require("jsonwebtoken");
