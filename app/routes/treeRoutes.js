@@ -17,6 +17,8 @@ router.put('/trees/:treeId/lifecycle', treeController.updateLifecycle);
 router.put('/trees/:treeId/nfc', treeController.updateNFCTag);
 router.put('/trees/:treeId/gps', treeController.updateGPS);
 router.put('/trees/:treeId/archive', treeController.archiveTree);
+router.put('/trees/:treeId/mobile-update', treeController.mobileUpdateTree);
+router.put('/trees/:treeId/mobile-profile', treeController.mobileUpdateTreeProfile);
 
 // ===== FIELD NOTES / OBSERVATIONS =====
 router.get('/trees/:treeId/observations', treeController.getTreeObservations);

@@ -1,4 +1,4 @@
-//path: oudra-server(same backend for web & mobile apps)>app>controllers>treeController.js
+
 const Tree = require('../models/TreeModel');
 const AutoIncrementTreeIdCount = require('../models/AutoIncrementTreeIdCount');
 const Observation = require('../models/Observations');
@@ -205,92 +205,71 @@ function autoUpdateLifecycleStatus(treeData, updates) {
   return { lifecycleStatus, readyForInoculation, readyForHarvest };
 }
 
-// Create a new tree
+// Create a new tree - UPDATED: No NFC, GPS, or status inputs from web
 exports.createTree = async (req, res) => {
   try {
-    const { gps, plantedDate, healthStatus } = req.body;
+    const { investorId, investorName, block } = req.body;
     
-    // Validate GPS - make it optional for creation
-    let gpsData = { lat: 0, lng: 0 };
-    if (gps && typeof gps.lat === 'number' && typeof gps.lng === 'number') {
-      gpsData = gps;
+    // Validate required fields
+    if (!block) {
+      return res.status(400).json({ message: 'Block is required' });
     }
 
-    // Calculate age when the plantedDate is provided
-    let age = null;
-    if (plantedDate) {
-      const planted = new Date(plantedDate);
-      const now = new Date();
-      const diffTime = Math.abs(now - planted);
-      const diffYears = Math.floor(diffTime / (1000 * 60 * 60 * 24 * 365));
-      age = diffYears;
-    }
+    // Get user info
+    const userData = req.user || {};
+    const lastUpdatedBy = userData.userId ? `${userData.userId} - ${userData.name || 'Manager'}` : 'web-admin';
 
+    // Generate tree ID
     const seq = await getNextTreeSequence();
     const treeId = formatTreeId(seq);
 
-    // Determine initial lifecycle status
-    const initialHealthStatus = healthStatus || 'Healthy';
-    const initialInoculationCount = typeof req.body.inoculationCount === 'number' ? req.body.inoculationCount : 0;
+    // Set current date as planted date
+    const plantedDate = new Date();
     
-    let initialLifecycleStatus = 'Growing';
-    let readyForInoculation = false;
-    let readyForHarvest = false;
-    
-    if (plantedDate) {
-      const ageData = calculateTreeAge(plantedDate);
-      if (initialInoculationCount === 0) {
-        if (ageData.years >= 4 && initialHealthStatus === 'Healthy') {
-          initialLifecycleStatus = 'Ready for 1st Inoculation';
-          readyForInoculation = true;
-        }
-      } else if (initialInoculationCount === 1) {
-        if (ageData.totalMonths >= 52 && initialHealthStatus === 'Healthy') {
-          initialLifecycleStatus = 'Ready for 2nd Inoculation';
-          readyForInoculation = true;
-        } else {
-          initialLifecycleStatus = 'Inoculated Once';
-        }
-      } else if (initialInoculationCount === 2) {
-        if (ageData.years >= 8 && initialHealthStatus === 'Healthy') {
-          initialLifecycleStatus = 'Ready for Harvest';
-          readyForHarvest = true;
-        } else {
-          initialLifecycleStatus = 'Inoculated Twice';
-        }
-      }
-    }
+    // Calculate age (0 years 0 months)
+    const ageData = calculateTreeAge(plantedDate);
 
-    const payload = {
+    // Create tree with default values
+    const tree = new Tree({
       treeId,
-      nfcTagId: req.body.nfcTagId || null,
-      plantedDate: req.body.plantedDate ? new Date(req.body.plantedDate) : null,
-      age: age,
-      investorId: req.body.investorId || null,
-      investorName: req.body.investorName || null,
-      block: req.body.block || null,
-      gps: gpsData,
-      healthStatus: initialHealthStatus,
-      lifecycleStatus: initialLifecycleStatus,
-      inoculationCount: initialInoculationCount,
-      readyForInoculation,
-      readyForHarvest,
+      nfcTagId: null, // No NFC assigned yet - field workers will assign
+      plantedDate,
+      age: ageData.years,
+      investorId: investorId || null,
+      investorName: investorName || null,
+      block,
+      gps: { lat: 0, lng: 0 }, // Default GPS - field workers will capture
+      healthStatus: 'Healthy', // Always healthy when planted
+      lastInspection: null,
+      inspectedBy: null,
       lastUpdatedAt: new Date(),
-      lastUpdatedBy: req.body.lastUpdatedBy || 'system',
+      lastUpdatedBy: lastUpdatedBy,
+      offlineUpdated: false,
+      lifecycleStatus: 'Growing', // Always growing when planted
+      inoculationCount: 0, // Always 0 when planted
+      readyForInoculation: false,
+      readyForHarvest: false,
       createdAt: new Date(),
       updatedAt: new Date()
-    };
+    });
 
-    const tree = new Tree(payload);
     await tree.save();
 
-    // Adding to tree history
+    // Add to tree history
     const history = new TreeHistory({
       treeId,
       actionType: 'ManualEdit',
-      newValue: payload,
-      changedBy: req.body.lastUpdatedBy || 'system',
-      notes: 'Tree created',
+      newValue: {
+        treeId,
+        block,
+        investorId: investorId || null,
+        investorName: investorName || null,
+        plantedDate,
+        healthStatus: 'Healthy',
+        lifecycleStatus: 'Growing'
+      },
+      changedBy: lastUpdatedBy,
+      notes: 'Tree registered digitally by manager',
       timestamp: new Date(),
       device: 'web'
     });
@@ -305,6 +284,7 @@ exports.createTree = async (req, res) => {
 
 // Getting all trees (with optional filters)
 exports.getAllTrees = async (req, res) => {
+  
   try {
     const filter = {};
     if (req.query.block) filter.block = req.query.block;
@@ -329,7 +309,8 @@ exports.getTreeById = async (req, res) => {
     const ageData = calculateTreeAge(tree.plantedDate);
     const treeWithAge = {
       ...tree,
-      calculatedAge: ageData
+      calculatedAge: ageData,
+      calculatedLifecycleStatus: determineLifecycleStatus(tree) // Add calculated status
     };
     
     return res.json(treeWithAge);
@@ -339,21 +320,30 @@ exports.getTreeById = async (req, res) => {
   }
 };
 
-// Generic update (PUT /api/trees/:treeId)
+// Generic update (PUT /api/trees/:treeId) - UPDATED: Managers can only update certain fields
 exports.updateTree = async (req, res) => {
   try {
     const tree = await Tree.findOne({ treeId: req.params.treeId }).exec();
     if (!tree) return res.status(404).json({ message: 'Tree not found' });
     
-    // Apply auto lifecycle logic
-    const lifecycleUpdates = autoUpdateLifecycleStatus(tree.toObject(), req.body);
+    // Get user info
+    const userData = req.user || {};
+    const lastUpdatedBy = userData.userId ? `${userData.userId} - ${userData.name || 'Manager'}` : 'web-admin';
     
+    // Managers can only update these fields
+    const allowedUpdates = ['block', 'investorId', 'investorName'];
     const updates = { 
-      ...req.body,
-      ...lifecycleUpdates,
-      updatedAt: new Date(), 
-      lastUpdatedAt: new Date() 
+      lastUpdatedBy,
+      lastUpdatedAt: new Date(),
+      updatedAt: new Date()
     };
+    
+    // Only copy allowed fields
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    });
     
     // Update the tree
     Object.assign(tree, updates);
@@ -364,8 +354,8 @@ exports.updateTree = async (req, res) => {
       treeId: req.params.treeId,
       actionType: 'ManualEdit',
       newValue: updates,
-      changedBy: req.body.lastUpdatedBy || 'system',
-      notes: 'Tree updated',
+      changedBy: lastUpdatedBy,
+      notes: 'Tree updated by manager',
       timestamp: new Date(),
       device: 'web'
     });
@@ -415,68 +405,32 @@ exports.deleteTree = async (req, res) => {
   }
 };
 
-// Update tree profile (for Save button in frontend) - WITH INOCULATION LOGIC
+// Update tree profile (for Save button in frontend) - UPDATED: Only manager fields
 exports.updateTreeProfile = async (req, res) => {
   try {
     const { treeId } = req.params;
     const { 
-      healthStatus, 
-      lifecycleStatus, 
-      inoculationCount, 
       lastUpdatedBy,
       block,
       investorId,
       investorName
+      // Removed: healthStatus, lifecycleStatus, inoculationCount (field workers only)
     } = req.body;
 
     const tree = await Tree.findOne({ treeId }).exec();
     if (!tree) return res.status(404).json({ message: 'Tree not found' });
 
-    // Prepare updates
+    // Prepare updates - only manager-editable fields
     const updates = {
       lastUpdatedBy,
       lastUpdatedAt: new Date(),
       updatedAt: new Date()
     };
 
-    // Update health status if provided
-    if (healthStatus) {
-      updates.healthStatus = healthStatus;
-      
-      // If tree becomes dead, stop lifecycle
-      if (healthStatus === 'Dead') {
-        updates.lifecycleStatus = 'Dead - Lifecycle Stopped';
-        updates.readyForInoculation = false;
-        updates.readyForHarvest = false;
-      }
-    }
-
-    // Update lifecycle status if provided (manual override)
-    if (lifecycleStatus) {
-      updates.lifecycleStatus = lifecycleStatus;
-      
-      // If manually set to Harvested, update flags
-      if (lifecycleStatus === 'Harvested') {
-        updates.readyForInoculation = false;
-        updates.readyForHarvest = false;
-      }
-    }
-
-    // Update inoculation count if provided
-    if (inoculationCount !== undefined) {
-      updates.inoculationCount = parseInt(inoculationCount) || 0;
-    }
-
-    // Update other fields if provided
+    // Update manager fields if provided
     if (block !== undefined) updates.block = block;
     if (investorId !== undefined) updates.investorId = investorId;
     if (investorName !== undefined) updates.investorName = investorName;
-
-    // Apply auto lifecycle logic (unless tree is dead or harvested)
-    if (updates.healthStatus !== 'Dead' && updates.lifecycleStatus !== 'Harvested') {
-      const lifecycleUpdates = autoUpdateLifecycleStatus(tree.toObject(), updates);
-      Object.assign(updates, lifecycleUpdates);
-    }
 
     // Update the tree
     Object.assign(tree, updates);
@@ -488,7 +442,7 @@ exports.updateTreeProfile = async (req, res) => {
       actionType: 'ManualEdit',
       newValue: updates,
       changedBy: lastUpdatedBy,
-      notes: 'Tree profile updated',
+      notes: 'Tree profile updated by manager',
       timestamp: new Date(),
       device: 'web'
     });
@@ -497,6 +451,254 @@ exports.updateTreeProfile = async (req, res) => {
     return res.json(tree);
   } catch (err) {
     console.error('updateTreeProfile error:', err);
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ========== CRITICAL ENDPOINT: MOBILE TREE PROFILE UPDATE ==========
+// This is the endpoint field workers will use to update health status and inoculation count
+exports.mobileUpdateTreeProfile = async (req, res) => {
+  try {
+    const { treeId } = req.params;
+    const { 
+      healthStatus, 
+      inoculationCount,
+      block,
+      lastUpdatedBy 
+    } = req.body;
+
+    const tree = await Tree.findOne({ treeId }).exec();
+    if (!tree) return res.status(404).json({ message: 'Tree not found' });
+
+    // Check if tree is dead or harvested - cannot update
+    if (tree.healthStatus === 'Dead' || tree.lifecycleStatus === 'Harvested') {
+      return res.status(400).json({ 
+        message: tree.healthStatus === 'Dead' 
+          ? 'Cannot update a dead tree. Lifecycle has stopped permanently.'
+          : 'Cannot update a harvested tree. Record is preserved for tracking.',
+        currentStatus: tree.healthStatus === 'Dead' ? 'Dead' : 'Harvested'
+      });
+    }
+
+    // Prepare updates - field workers can update these
+    const updates = {
+      lastUpdatedBy: lastUpdatedBy || 'field-worker',
+      lastUpdatedAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    // Update allowed fields if provided
+    if (healthStatus !== undefined) updates.healthStatus = healthStatus;
+    if (inoculationCount !== undefined) updates.inoculationCount = parseInt(inoculationCount);
+    if (block !== undefined) updates.block = block;
+
+    // Auto-calculate lifecycle status based on new data
+    const newTreeData = { ...tree.toObject(), ...updates };
+    const calculatedLifecycle = determineLifecycleStatus(newTreeData);
+    updates.lifecycleStatus = calculatedLifecycle;
+
+    // Update flags based on lifecycle
+    const age = calculateTreeAge(tree.plantedDate);
+    const newInoculationCount = inoculationCount !== undefined ? parseInt(inoculationCount) : tree.inoculationCount;
+    const newHealthStatus = healthStatus || tree.healthStatus;
+    
+    // Set readyForInoculation flag
+    if (newInoculationCount === 0 && age.years >= 4 && newHealthStatus === 'Healthy') {
+      updates.readyForInoculation = true;
+    } else if (newInoculationCount === 1 && age.totalMonths >= 52 && newHealthStatus === 'Healthy') {
+      updates.readyForInoculation = true;
+    } else {
+      updates.readyForInoculation = false;
+    }
+
+    // Set readyForHarvest flag
+    if (newInoculationCount === 2 && age.years >= 8 && newHealthStatus === 'Healthy') {
+      updates.readyForHarvest = true;
+    } else {
+      updates.readyForHarvest = false;
+    }
+
+    // Update the tree
+    Object.assign(tree, updates);
+    await tree.save();
+
+    // Add to history
+    const history = new TreeHistory({
+      treeId,
+      actionType: 'ManualEdit',
+      oldValue: {
+        healthStatus: tree.healthStatus,
+        inoculationCount: tree.inoculationCount,
+        lifecycleStatus: tree.lifecycleStatus,
+        block: tree.block
+      },
+      newValue: updates,
+      changedBy: lastUpdatedBy || 'field-worker',
+      notes: 'Tree profile updated via mobile app',
+      timestamp: new Date(),
+      device: 'mobile'
+    });
+    await history.save();
+    
+    // Return tree with calculated fields
+    const responseTree = {
+      ...tree.toObject(),
+      calculatedLifecycleStatus: calculatedLifecycle,
+      calculatedAge: calculateTreeAge(tree.plantedDate)
+    };
+    
+    return res.json(responseTree);
+  } catch (err) {
+    console.error('mobileUpdateTreeProfile error:', err);
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// Mobile app endpoint for field worker updates - ALL IN ONE
+exports.mobileUpdateTree = async (req, res) => {
+  try {
+    const { treeId } = req.params;
+    const { 
+      nfcTagId,
+      healthStatus, 
+      lifecycleStatus, // This should come from auto-calculation, not from mobile
+      inoculationCount,
+      gps,
+      observedBy,
+      notes 
+    } = req.body;
+
+    const tree = await Tree.findOne({ treeId }).exec();
+    if (!tree) return res.status(404).json({ message: 'Tree not found' });
+
+    const updates = {
+      lastUpdatedAt: new Date(),
+      updatedAt: new Date(),
+      lastUpdatedBy: observedBy || 'field-worker'
+    };
+
+    // Field workers can update these fields:
+    if (nfcTagId !== undefined) {
+      updates.nfcTagId = nfcTagId;
+      updates.offlineUpdated = true;
+    }
+    
+    if (healthStatus) updates.healthStatus = healthStatus;
+    if (inoculationCount !== undefined) updates.inoculationCount = inoculationCount;
+    if (gps) updates.gps = gps;
+
+    // Apply auto lifecycle logic - CRITICAL: Override any mobile-sent lifecycleStatus
+    const lifecycleUpdates = autoUpdateLifecycleStatus(tree.toObject(), updates);
+    Object.assign(updates, lifecycleUpdates);
+
+    // Update the tree
+    Object.assign(tree, updates);
+    await tree.save();
+
+    // Add to tree history
+    const history = new TreeHistory({
+      treeId,
+      actionType: 'ManualEdit',
+      newValue: updates,
+      changedBy: observedBy || 'field-worker',
+      notes: notes || 'Tree updated via mobile app',
+      timestamp: new Date(),
+      device: 'mobile'
+    });
+    await history.save();
+
+    // If NFC was assigned/unassigned, add specific history entry
+    if (nfcTagId !== undefined) {
+      const nfcHistory = new TreeHistory({
+        treeId,
+        actionType: 'ManualEdit',
+        newValue: { nfcTagId },
+        changedBy: observedBy || 'field-worker',
+        notes: nfcTagId ? `NFC tag ${nfcTagId} assigned` : 'NFC tag unassigned',
+        timestamp: new Date(),
+        device: 'mobile'
+      });
+      await nfcHistory.save();
+    }
+    
+    return res.json(tree);
+  } catch (err) {
+    console.error('mobileUpdateTree error:', err);
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// Mobile app endpoint for field worker updates - NEW FUNCTION
+exports.mobileUpdateTree = async (req, res) => {
+  try {
+    const { treeId } = req.params;
+    const { 
+      nfcTagId,
+      healthStatus, 
+      lifecycleStatus, 
+      inoculationCount,
+      gps,
+      observedBy,
+      notes 
+    } = req.body;
+
+    const tree = await Tree.findOne({ treeId }).exec();
+    if (!tree) return res.status(404).json({ message: 'Tree not found' });
+
+    const updates = {
+      lastUpdatedAt: new Date(),
+      updatedAt: new Date(),
+      lastUpdatedBy: observedBy || 'field-worker'
+    };
+
+    // Field workers can update these fields:
+    if (nfcTagId !== undefined) {
+      updates.nfcTagId = nfcTagId;
+      updates.offlineUpdated = true;
+    }
+    
+    if (healthStatus) updates.healthStatus = healthStatus;
+    if (lifecycleStatus) updates.lifecycleStatus = lifecycleStatus;
+    if (inoculationCount !== undefined) updates.inoculationCount = inoculationCount;
+    if (gps) updates.gps = gps;
+
+    // Apply auto lifecycle logic
+    const lifecycleUpdates = autoUpdateLifecycleStatus(tree.toObject(), updates);
+    Object.assign(updates, lifecycleUpdates);
+
+    // Update the tree
+    Object.assign(tree, updates);
+    await tree.save();
+
+    // Add to tree history
+    const history = new TreeHistory({
+      treeId,
+      actionType: 'ManualEdit',
+      newValue: updates,
+      changedBy: observedBy || 'field-worker',
+      notes: notes || 'Tree updated via mobile app',
+      timestamp: new Date(),
+      device: 'mobile'
+    });
+    await history.save();
+
+    // If NFC was assigned/unassigned, add specific history entry
+    if (nfcTagId !== undefined) {
+      const nfcHistory = new TreeHistory({
+        treeId,
+        actionType: 'ManualEdit',
+        newValue: { nfcTagId },
+        changedBy: observedBy || 'field-worker',
+        notes: nfcTagId ? `NFC tag ${nfcTagId} assigned` : 'NFC tag unassigned',
+        timestamp: new Date(),
+        device: 'mobile'
+      });
+      await nfcHistory.save();
+    }
+    
+    return res.json(tree);
+  } catch (err) {
+    console.error('mobileUpdateTree error:', err);
     return res.status(500).json({ message: err.message });
   }
 };
@@ -699,7 +901,7 @@ exports.updateLifecycle = async (req, res) => {
   }
 };
 
-// Link / assign NFC tag to tree
+// Link / assign NFC tag to tree - UPDATED: Now mobile-only endpoint
 exports.updateNFCTag = async (req, res) => {
   try {
     const { nfcTagId, assignedBy } = req.body;
@@ -719,9 +921,9 @@ exports.updateNFCTag = async (req, res) => {
       actionType: 'ManualEdit',
       newValue: { nfcTagId },
       changedBy: assignedBy,
-      notes: 'NFC tag assigned',
+      notes: 'NFC tag assigned via mobile app',
       timestamp: new Date(),
-      device: 'web'
+      device: 'mobile'
     });
     await history.save();
 
@@ -732,37 +934,84 @@ exports.updateNFCTag = async (req, res) => {
   }
 };
 
-// Update GPS coords
+// Update GPS coords - UPDATED: Now mobile-only endpoint
 exports.updateGPS = async (req, res) => {
   try {
+    console.log('========================================');
+    console.log('🌍 GPS UPDATE REQUEST RECEIVED');
+    console.log('========================================');
+    console.log('Tree ID:', req.params.treeId);
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('Request headers:', JSON.stringify(req.headers, null, 2));
+    console.log('Timestamp:', new Date().toISOString());
+    
     const { gps, updatedBy } = req.body;
+    
+    // Validate GPS data
     if (!gps || typeof gps.lat !== 'number' || typeof gps.lng !== 'number') {
+      console.log('❌ Invalid GPS data:', gps);
       return res.status(400).json({ message: 'gps { lat, lng } required' });
     }
-
+    
+    console.log('✅ GPS data validated:', gps);
+    console.log('   Latitude:', gps.lat);
+    console.log('   Longitude:', gps.lng);
+    
+    // Find tree first to see current GPS
+    const existingTree = await Tree.findOne({ treeId: req.params.treeId }).lean().exec();
+    if (!existingTree) {
+      console.log('❌ Tree not found:', req.params.treeId);
+      return res.status(404).json({ message: 'Tree not found' });
+    }
+    
+    console.log('📍 Current GPS in DB:', existingTree.gps);
+    console.log('📍 New GPS to save:', gps);
+    
+    // Update tree
     const tree = await Tree.findOneAndUpdate(
       { treeId: req.params.treeId },
-      { gps, lastUpdatedBy: updatedBy || null, updatedAt: new Date(), lastUpdatedAt: new Date() },
+      { 
+        gps, 
+        lastUpdatedBy: updatedBy || null, 
+        updatedAt: new Date(), 
+        lastUpdatedAt: new Date() 
+      },
       { new: true }
     ).exec();
 
-    if (!tree) return res.status(404).json({ message: 'Tree not found' });
-
+    console.log('✅ Tree updated in DB');
+    console.log('   Updated GPS:', tree.gps);
+    
+    // Verify the update
+    const verifyTree = await Tree.findOne({ treeId: req.params.treeId }).lean().exec();
+    console.log('🔍 Verification - GPS in DB after update:', verifyTree.gps);
+    
     // Add to history
     const history = new TreeHistory({
       treeId: req.params.treeId,
       actionType: 'ManualEdit',
+      oldValue: { gps: existingTree.gps },
       newValue: { gps },
       changedBy: updatedBy,
-      notes: 'GPS coordinates updated',
+      notes: `GPS coordinates updated via mobile app from (${existingTree.gps.lat}, ${existingTree.gps.lng}) to (${gps.lat}, ${gps.lng})`,
       timestamp: new Date(),
-      device: 'web'
+      device: 'mobile'
     });
     await history.save();
+    console.log('✅ History entry created');
+    
+    console.log('========================================');
+    console.log('✅ GPS UPDATE COMPLETED SUCCESSFULLY');
+    console.log('========================================');
 
     return res.json(tree);
   } catch (err) {
-    console.error('updateGPS error:', err);
+    console.error('========================================');
+    console.error('❌ GPS UPDATE ERROR');
+    console.error('========================================');
+    console.error('Error:', err);
+    console.error('Stack:', err.stack);
+    console.error('========================================');
     return res.status(500).json({ message: err.message });
   }
 };
@@ -862,7 +1111,7 @@ exports.getTreeStatusSummary = async (req, res) => {
   }
 };
 
-// FIELD NOTES / OBSERVATIONS
+// ========== FIELD NOTES / OBSERVATIONS ==========
 exports.getTreeObservations = async (req, res) => {
   try {
     const observations = await Observation.find({ treeId: req.params.treeId })
@@ -1015,7 +1264,7 @@ exports.deleteObservation = async (req, res) => {
   }
 };
 
-// TREE HISTORY
+// ========== TREE HISTORY ==========
 exports.getTreeHistory = async (req, res) => {
   try {
     const history = await TreeHistory.find({ treeId: req.params.treeId })
