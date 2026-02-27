@@ -1,539 +1,422 @@
-//oudra-server(common backend)/app/controllers/auth_controller.js
-const User = require("../models/User");
-const Checkout = require("../models/Checkout");
-const jwt = require("jsonwebtoken");
-const fs = require("fs");
-const path = require("path");
-const crypto = require("crypto");
+// oudra-server/app/controllers/auth_controller.js
+// CHANGES FROM GLIMMER:
+//  1. register() removed (no public self-registration in Oudra)
+//  2. login() updated: 
+//       - Accepts "platform" in request body
+//       - Validates platform vs role (fieldworkers → mobile only, manager/investor → web only)
+//       - JWT token now includes { userId, role, email, platform }
+//  3. createManagedAccount() added: Manager creates accounts for investors/fieldworkers
+//  4. requestPasswordReset() and resetPassword() kept as-is (minimal changes)
+//  5. Removed getAllUsers Glimmer logic (loyalty points / checkout checks)
+
+const User     = require("../models/User");
+const Employee = require("../models/Employee");
+const Investor = require("../models/Investor");
+const jwt      = require("jsonwebtoken");
+const crypto   = require("crypto");
 const nodemailer = require("nodemailer");
 
-// Helper function to get paginated users
-const getPaginatedUsers = async (
-  page = 1,
-  limit = 10,
-  search = "",
-  baseQuery = {}
-) => {
-  const skip = (page - 1) * limit;
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
 
-  const query = { ...baseQuery };
-  if (search) {
-    query.$or = [
-      { firstName: { $regex: search, $options: "i" } },
-      { lastName: { $regex: search, $options: "i" } },
-      { email: { $regex: search, $options: "i" } },
-      { phone: { $regex: search, $options: "i" } },
-      { userId: { $regex: search, $options: "i" } },
-    ];
-  }
-
-  const [users, total] = await Promise.all([
-    User.find(query).select("-password").skip(skip).limit(limit),
-    User.countDocuments(query),
-  ]);
-
-  return {
-    users,
-    total,
-    pages: Math.ceil(total / limit),
-    currentPage: page,
-  };
+// Generate a secure random temporary password: 8 chars alphanum
+const generateTempPassword = () => {
+  return crypto.randomBytes(4).toString("hex"); // e.g. "a3f7c2d1"
 };
 
-const register = async (req, res) => {
-  try {
-    const {
-      firstName,
-      lastName,
-      email,
-      password,
-      phone,
-      street,
-      city,
-      postalCode,
-      country,
-    } = req.body;
+// Reusable nodemailer transporter
+const createTransporter = () =>
+  nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
 
-    if (!firstName || !lastName || !email || !password) {
-      return res
-        .status(400)
-        .json({ message: "Name, email, and password are required" });
-    }
-
-    // Check for existing email or phone
-    const existingUser = await User.findOne({
-      $or: [{ email }, { phone }],
-    });
-
-    if (existingUser) {
-      let message = "User already exists";
-      if (existingUser.email === email) {
-        message =
-          "It looks like you're already registered. Please sign in with your credentials.";
-      } else if (existingUser.phone === phone) {
-        message =
-          "It looks like you're already registered. Please sign in with your credentials.";
-      }
-      return res.status(400).json({ message });
-    }
-
-    const user = new User({
-      firstName,
-      lastName,
-      email,
-      password,
-      phone,
-      address: { street, city, postalCode, country },
-      profilePicture: req.file ? req.file.filename : null,
-      isActive: true,
-      loyaltyPoints: 0,
-    });
-
-    await user.save();
-
-    res.status(201).json({
-      message: "User registered successfully",
-      user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        userId: user.userId,
-        isActive: user.isActive,
-        loyaltyPoints: user.loyaltyPoints,
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// Combined and improved getAllUsers function
-const getAllUsers = async (req, res) => {
-  try {
-    const { page = 1, limit = 10, search = "" } = req.query;
-
-    const baseQuery = { role: { $ne: "admin" } };
-
-    // If no pagination parameters are provided, return all users (backwards compatible)
-    if (!page && !limit) {
-      const users = await User.find(baseQuery).select("-password");
-      return res.json(users);
-    }
-
-    // Otherwise, return paginated results
-    const result = await getPaginatedUsers(
-      parseInt(page),
-      parseInt(limit),
-      search,
-      baseQuery
-    );
-
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-
-    const usersWithStatus = await Promise.all(
-      result.users.map(async (user) => {
-        // Checking if account is less than 3 months old
-        const isNewUser = user.createdAt >= threeMonthsAgo;
-
-        // Only check for checkouts if not a new user
-        let isActive = isNewUser;
-        if (!isNewUser) {
-          const recentCheckout = await Checkout.findOne({
-            userId: user._id,
-            eventDate: { $gte: threeMonthsAgo },
-          });
-          isActive = !!recentCheckout;
-        }
-
-        return {
-          ...user.toObject(),
-          isActive,
-          isNewUser, 
-        };
-      })
-    );
-
-    res.json({
-      users: usersWithStatus,
-      pagination: {
-        total: result.total,
-        pages: result.pages,
-        currentPage: result.currentPage,
-        limit: parseInt(limit),
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-const toggleUserStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const user = await User.findById(id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    user.isActive = !user.isActive;
-    await user.save();
-
-    res.json({
-      message: `User ${
-        user.isActive ? "activated" : "deactivated"
-      } successfully`,
-      user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        isActive: user.isActive,
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-const updateLoyaltyPoints = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { points } = req.body;
-
-    if (typeof points !== "number") {
-      return res.status(400).json({ message: "Invalid points value" });
-    }
-
-    const user = await User.findById(id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    user.loyaltyPoints = points;
-    await user.save();
-
-    res.json({
-      message: "Loyalty points updated successfully",
-      user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        loyaltyPoints: user.loyaltyPoints,
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
+// ─── 1. LOGIN ─────────────────────────────────────────────────────────────────
+// Works for all 3 roles. Platform validation enforced here.
+// Body: { email, password, platform }  ("web" | "mobile")
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, platform } = req.body;
 
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ message: "Invalid credentials" });
+    // ── Validation ──────────────────────────────────────────────
+    if (!email || !password || !platform) {
+      return res.status(400).json({
+        message: "Email, password, and platform are required.",
+      });
     }
 
+    if (!["web", "mobile"].includes(platform)) {
+      return res.status(400).json({ message: "Invalid platform. Must be 'web' or 'mobile'." });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: "Invalid email format." });
+    }
+
+    // ── Find user ────────────────────────────────────────────────
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (!user) {
+      return res.status(401).json({ message: "Invalid credentials." });
+    }
+
+    // ── Account active check ─────────────────────────────────────
+    if (!user.isActive) {
+      return res.status(403).json({
+        message: "Your account has been deactivated. Please contact the manager.",
+      });
+    }
+
+    // ── Password check ────────────────────────────────────────────
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
-      return res.status(400).json({ message: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid credentials." });
     }
 
+    // ── Platform vs Role enforcement ──────────────────────────────
+    // Rule: fieldworkers → mobile only | manager & investor → web only
+    if (user.role === "fieldworker" && platform !== "mobile") {
+      return res.status(403).json({
+        message: "Field workers must log in via the mobile app.",
+      });
+    }
+    if ((user.role === "manager" || user.role === "investor") && platform !== "web") {
+      return res.status(403).json({
+        message: "Managers and investors must log in via the web app.",
+      });
+    }
+
+    // ── Sign JWT ──────────────────────────────────────────────────
     const token = jwt.sign(
-      { userId: user._id, role: user.role },
+      {
+        userId:   user._id,
+        role:     user.role,
+        email:    user.email,
+        platform: platform,
+      },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
-    res.json({
+    return res.json({
       token,
       user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        role: user.role,
-        loyaltyPoints: user.loyaltyPoints,
-        photoUrl: `${req.protocol}://${req.get("host")}/uploads/${
-          user.profilePicture
-        }`,
+        id:             user._id,
+        firstName:      user.firstName,
+        lastName:       user.lastName,
+        email:          user.email,
+        role:           user.role,
+        linkedRecordId: user.linkedRecordId,
+        photoUrl: user.profilePicture
+          ? `${req.protocol}://${req.get("host")}/uploads/${user.profilePicture}`
+          : null,
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("Login error:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
 
-//Forgot password and reset password functions
-const requestPasswordReset = async (req, res) => {
+// ─── 2. CREATE MANAGED ACCOUNT ───────────────────────────────────────────────
+// Only managers can call this endpoint (protected by authMiddleware + roleMiddleware("manager"))
+// Creates a User record linked to an existing Employee OR Investor record.
+// Body: { linkedRecordId, role }  role must be "investor" or "fieldworker"
+// The email is pulled from the linked record (Employee / Investor)
+const createManagedAccount = async (req, res) => {
   try {
-    const { email } = req.body;
-    const user = await User.findOne({ email });
+    const { linkedRecordId, role } = req.body;
 
-    if (!user) {
-      return res.status(200).json({
-        message:
-          "We’ve sent a password reset link to the email provided.Please check your inbox or spam folder",
+    if (!linkedRecordId || !role) {
+      return res.status(400).json({ message: "linkedRecordId and role are required." });
+    }
+
+    if (!["investor", "fieldworker"].includes(role)) {
+      return res.status(400).json({ message: "Role must be 'investor' or 'fieldworker'." });
+    }
+
+    // ── Fetch the linked record ───────────────────────────────────────────────
+    let linkedRecord;
+    if (role === "fieldworker") {
+      linkedRecord = await Employee.findById(linkedRecordId);
+      if (!linkedRecord) {
+        return res.status(404).json({ message: "Employee record not found." });
+      }
+    } else {
+      linkedRecord = await Investor.findById(linkedRecordId);
+      if (!linkedRecord) {
+        return res.status(404).json({ message: "Investor record not found." });
+      }
+    }
+
+    // ── Check if login account already exists ─────────────────────────────────
+    const existingUser = await User.findOne({ email: linkedRecord.email.toLowerCase().trim() });
+    if (existingUser) {
+      return res.status(409).json({
+        message: "A login account already exists for this email address.",
       });
     }
 
-    // Generate the token
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    const resetTokenExpiry = Date.now() + 3600000; // Password reset token valid for 1 hour
+    // ── Split name into first/last ────────────────────────────────────────────
+    const nameParts = (linkedRecord.name || "").trim().split(" ");
+    const firstName = nameParts[0] || linkedRecord.name;
+    const lastName  = nameParts.slice(1).join(" ") || "-";
 
-    user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = resetTokenExpiry;
-    await user.save();
+    // ── Generate temp password ────────────────────────────────────────────────
+    const tempPassword = generateTempPassword();
 
-    // Send email
-    const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
-
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
+    // ── Create user ───────────────────────────────────────────────────────────
+    const newUser = new User({
+      firstName,
+      lastName,
+      email:          linkedRecord.email.toLowerCase().trim(),
+      password:       tempPassword,       // pre-save hook hashes it
+      phone:          linkedRecord.phone  || "",
+      role,
+      linkedRecordId: linkedRecord._id,
+      isActive:       true,
     });
 
-    const mailOptions = {
-      to: user.email,
-      from: process.env.EMAIL_FROM,
-      subject: "Password Reset Request",
-      text: `You are receiving this because you have requested a password reset.\n\n
-        Please click on the following link, or paste it into your browser to complete the process:\n\n
-        ${resetUrl}\n\n
-        If you did not request this, please ignore this email and your password will remain unchanged.\n`,
-    };
+    await newUser.save();
 
-    await transporter.sendMail(mailOptions);
+    // ── Send credentials email (non-critical — account is created regardless) ─
+    try {
+      const platformText = role === "fieldworker" ? "mobile app" : "web app";
+      const transporter  = createTransporter();
 
-    res.status(200).json({
-      message:
-        "We’ve sent a password reset link to the email provided.Please check your inbox or spam folder",
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-const resetPassword = async (req, res) => {
-  try {
-    const { token, password } = req.body;
-
-    const user = await User.findOne({
-      resetPasswordToken: token,
-      resetPasswordExpires: { $gt: Date.now() },
-    });
-
-    if (!user) {
-      return res
-        .status(400)
-        .json({ message: "Password reset token is invalid or has expired" });
+      await transporter.sendMail({
+        to:      newUser.email,
+        from:    process.env.EMAIL_FROM,
+        subject: "Your Oudra Login Credentials",
+        html: `
+          <p>Dear ${linkedRecord.name},</p>
+          <p>Your login account has been created for the Oudra ${platformText}.</p>
+          <p><strong>Email:</strong> ${newUser.email}</p>
+          <p><strong>Temporary Password:</strong> ${tempPassword}</p>
+          <p>Please log in and change your password using the 
+          <strong>Forgot Password</strong> option.</p>
+          <p>— Oudra Management Team</p>
+        `,
+      });
+      console.log(`✅ Credentials email sent to ${newUser.email}`);
+    } catch (emailErr) {
+      // Email failed but account was created successfully — log and continue
+      console.warn(`⚠️ Email failed (account still created):`, emailErr.message);
     }
 
-    user.password = password;
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpires = undefined;
-    await user.save();
-
-    // Send confirmation email
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
+    // ── Return success with credentials ──────────────────────────────────────
+    return res.status(201).json({
+      message: `Login account created successfully for ${linkedRecord.name}.`,
+      credentials: {
+        email:        newUser.email,
+        tempPassword, // Returned so manager can share manually if email fails
+        role,
       },
     });
-
-    const mailOptions = {
-      to: user.email,
-      from: process.env.EMAIL_FROM,
-      subject: "Your password has been updated successfully!",
-      text: `Hello,\n\n
-        This is a confirmation that the password for your account ${user.email} has just been changed.\n`,
-    };
-
-    await transporter.sendMail(mailOptions);
-
-    res.status(200).json({ message: "Password has been updated successfully" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("createManagedAccount error:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
 
+// ─── 3. GET CURRENT USER ─────────────────────────────────────────────────────
 const getCurrentUser = async (req, res) => {
   try {
     const user = await User.findById(req.user.userId);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
     res.json(user);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-const getUserById = async (req, res) => {
+// ─── 4. FORGOT PASSWORD ──────────────────────────────────────────────────────
+// Sends a reset link to the user's registered email
+// Works for all roles (manager resets via web, fieldworker via mobile deep link)
+const requestPasswordReset = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select("-password");
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: "Email is required." });
     }
-    res.json(user);
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: "Invalid email format." });
+    }
+
+    // Always return the same message whether found or not (security)
+    const genericMessage =
+      "If this email is registered, a password reset link will be sent shortly.";
+
+    const user = await User.findOne({ email: email.toLowerCase().trim() }).select(
+      "+resetPasswordToken +resetPasswordExpires"
+    );
+
+    if (!user) {
+      return res.status(200).json({ message: genericMessage });
+    }
+
+    if (!user.isActive) {
+      return res.status(200).json({ message: genericMessage });
+    }
+
+    // Generate reset token
+    const resetToken       = crypto.randomBytes(32).toString("hex");
+    user.resetPasswordToken   = resetToken;
+    user.resetPasswordExpires = Date.now() + 3600000; // 1 hour
+    await user.save();
+
+    // Build reset URL based on role/platform
+    const clientUrl =
+      user.role === "fieldworker"
+        ? process.env.MOBILE_APP_SCHEME || process.env.CLIENT_URL // deep link for mobile
+        : process.env.CLIENT_URL;
+
+    const resetUrl = `${clientUrl}/reset-password/${resetToken}`;
+
+    const transporter = createTransporter();
+    await transporter.sendMail({
+      to:      user.email,
+      from:    process.env.EMAIL_FROM,
+      subject: "Oudra – Password Reset Request",
+      html: `
+        <p>Dear ${user.firstName},</p>
+        <p>You requested a password reset. Click the link below to set a new password:</p>
+        <p><a href="${resetUrl}">${resetUrl}</a></p>
+        <p>This link expires in <strong>1 hour</strong>.</p>
+        <p>If you did not request this, please ignore this email.</p>
+        <p>— Oudra Management Team</p>
+      `,
+    });
+
+    return res.status(200).json({ message: genericMessage });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("requestPasswordReset error:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
 
-const updateUser = async (req, res) => {
+// ─── 5. RESET PASSWORD ───────────────────────────────────────────────────────
+// Body: { token, password, confirmPassword }
+const resetPassword = async (req, res) => {
   try {
-    const { id } = req.params;
-    const updates = req.body;
+    const { token, password, confirmPassword } = req.body;
 
-    const currentUser = await User.findById(id);
-    if (!currentUser) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    if (req.file) {
-      // Delete old profile picture if it exists
-      if (currentUser.profilePicture) {
-        const oldImagePath = path.join(
-          __dirname,
-          "../../uploads",
-          currentUser.profilePicture
-        );
-        if (fs.existsSync(oldImagePath)) {
-          fs.unlinkSync(oldImagePath);
-        }
-      }
-      updates.profilePicture = req.file.filename;
-    }
-
-    if (
-      updates.street ||
-      updates.city ||
-      updates.postalCode ||
-      updates.country
-    ) {
-      updates.address = {
-        street: updates.street || currentUser.address.street,
-        city: updates.city || currentUser.address.city,
-        postalCode: updates.postalCode || currentUser.address.postalCode,
-        country: updates.country || currentUser.address.country,
-      };
-      delete updates.street;
-      delete updates.city;
-      delete updates.postalCode;
-      delete updates.country;
-    }
-
-    if (updates.password) {
+    if (!token || !password || !confirmPassword) {
       return res
         .status(400)
-        .json({ message: "Use the change password route to update password" });
+        .json({ message: "Token, password, and confirmPassword are required." });
     }
 
-    const updatedUser = await User.findByIdAndUpdate(id, updates, {
-      new: true,
-    }).select("-password");
+    if (password !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match." });
+    }
 
-    res.json(updatedUser);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
+    if (password.length < 8) {
+      return res.status(400).json({ message: "Password must be at least 8 characters." });
+    }
 
-const deleteUser = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const requestingUserId = req.user.userId; // ID of the user making the request
+    const user = await User.findOne({
+      resetPasswordToken:   token,
+      resetPasswordExpires: { $gt: Date.now() },
+    }).select("+resetPasswordToken +resetPasswordExpires");
 
-    const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res
+        .status(400)
+        .json({ message: "Password reset link is invalid or has expired." });
     }
 
-    // Delete profile picture if exists
-    if (user.profilePicture) {
-      const imagePath = path.join(
-        __dirname,
-        "../../uploads",
-        user.profilePicture
-      );
-      if (fs.existsSync(imagePath)) {
-        fs.unlinkSync(imagePath);
-      }
-    }
+    user.password             = password; // pre-save hook hashes it
+    user.resetPasswordToken   = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
 
-    await User.findByIdAndDelete(id);
+    // Confirmation email
+    const transporter = createTransporter();
+    await transporter.sendMail({
+      to:      user.email,
+      from:    process.env.EMAIL_FROM,
+      subject: "Oudra – Password Updated Successfully",
+      html: `
+        <p>Dear ${user.firstName},</p>
+        <p>Your Oudra account password has been updated successfully.</p>
+        <p>If you did not make this change, contact your manager immediately.</p>
+        <p>— Oudra Management Team</p>
+      `,
+    });
 
-    // Return different messages based on who is deleting
-    if (id === requestingUserId) {
-      return res.json({
-        message: "User deleted successfully",
-        isSelfDeletion: true,
-      });
-    } else {
-      return res.json({
-        message: "User deleted successfully",
-        isSelfDeletion: false,
-      });
-    }
+    return res.status(200).json({ message: "Password updated successfully." });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("resetPassword error:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
 
-const checkExistingUser = async (req, res) => {
+// ─── 6. GET ALL USERS (Manager only) ─────────────────────────────────────────
+const getAllUsers = async (req, res) => {
   try {
-    const { email, phone } = req.query;
+    const { page = 1, limit = 10, search = "", role } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const existingUser = await User.findOne({
-      $or: [{ email: email }, { phone: phone }],
-    });
-
-    if (existingUser) {
-      // Check if both email and phone are provided
-      let message = "User with this ";
-      if (existingUser.email === email && existingUser.phone === phone) {
-        message += "email and phone number already exists";
-      } else if (existingUser.email === email) {
-        message += "email already exists";
-      } else {
-        message += "phone number already exists";
-      }
-      return res.status(200).json({ exists: true, message });
+    const query = {};
+    if (role) query.role = role;
+    if (search) {
+      query.$or = [
+        { firstName:  { $regex: search, $options: "i" } },
+        { lastName:   { $regex: search, $options: "i" } },
+        { email:      { $regex: search, $options: "i" } },
+        { userId:     { $regex: search, $options: "i" } },
+      ];
     }
 
-    res.status(200).json({ exists: false });
-  } catch (err) {
-    console.error("Error checking existing user:", err);
-    res.status(500).json({
-      error: "Error checking user existence",
-      details: err.message,
+    const [users, total] = await Promise.all([
+      User.find(query).select("-password").skip(skip).limit(parseInt(limit)),
+      User.countDocuments(query),
+    ]);
+
+    return res.json({
+      users,
+      pagination: {
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+        currentPage: parseInt(page),
+        limit: parseInt(limit),
+      },
     });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+// ─── 7. TOGGLE USER STATUS (Manager only) ────────────────────────────────────
+const toggleUserStatus = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    user.isActive = !user.isActive;
+    await user.save();
+
+    return res.json({
+      message: `Account ${user.isActive ? "activated" : "deactivated"} successfully.`,
+      user: { id: user._id, email: user.email, isActive: user.isActive },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 };
 
 module.exports = {
-  register,
   login,
+  createManagedAccount,
   getCurrentUser,
   getAllUsers,
-  getUserById,
-  updateUser,
-  deleteUser,
-  checkExistingUser,
   toggleUserStatus,
-  updateLoyaltyPoints,
-  getPaginatedUsers,
   requestPasswordReset,
   resetPassword,
 };
