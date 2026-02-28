@@ -1,4 +1,4 @@
-//path:oudra-server/app/controllers/employee_controller.js
+// oudra-server/app/controllers/employee_controller.js
 const Employee = require("../models/Employee");
 const path = require("path");
 const fs = require("fs");
@@ -9,7 +9,6 @@ const addEmployee = async (req, res) => {
 
     const profileImg = req.file ? `app/uploads/${req.file.filename}` : "";
 
-    // Generate employee ID
     const generateEmpCode = () => {
       const now = new Date();
       const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -34,9 +33,9 @@ const addEmployee = async (req, res) => {
 
     await employee.save();
 
-    res.status(201).json({ 
-      message: "Field worker created successfully", 
-      data: employee 
+    res.status(201).json({
+      message: "Field worker created successfully",
+      data: employee,
     });
   } catch (err) {
     console.error("Error in addEmployee:", err);
@@ -60,6 +59,28 @@ const getAllEmployees = async (req, res) => {
     res.status(200).json({ data: formattedEmployees });
   } catch (err) {
     console.error("Error in getAllEmployees:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// NEW: Get single employee by ID — used by mobile profile screen
+const getEmployeeById = async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) {
+      return res.status(404).json({ message: "Employee not found" });
+    }
+    const formattedEmployee = {
+      ...employee.toObject(),
+      profileImg: employee.profileImg
+        ? `${req.protocol}://${req.get("host")}/uploads/${
+            employee.profileImg.split("uploads/")[1]
+          }`
+        : null,
+    };
+    res.status(200).json({ data: formattedEmployee });
+  } catch (err) {
+    console.error("Error in getEmployeeById:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -129,6 +150,7 @@ const deleteEmployee = async (req, res) => {
 module.exports = {
   addEmployee,
   getAllEmployees,
+  getEmployeeById,
   updateEmployee,
   deleteEmployee,
 };

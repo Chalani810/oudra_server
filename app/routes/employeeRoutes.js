@@ -5,6 +5,7 @@ const {
   addEmployee,
   deleteEmployee,
   getAllEmployees,
+  getEmployeeById, 
   updateEmployee,
 } = require("../controllers/employee_controller");
 const router = express.Router();
@@ -22,6 +23,7 @@ const upload = multer({ storage: storage });
 
 router.post("/", upload.single("profileImg"), addEmployee);
 router.get("/", getAllEmployees);
+router.get('/:id', getEmployeeById); 
 router.put("/:id", upload.single("profileImg"), updateEmployee);
 router.delete("/:id", deleteEmployee);
 
