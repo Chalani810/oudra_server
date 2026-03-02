@@ -13,6 +13,11 @@ const TreeSchema = new mongoose.Schema({
   age: { type: Number, default: null },
   investorId: { type: String, default: null },
   investorName: { type: String, default: null },
+  investor: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Investor',
+    default: null
+  },
   block: { type: String, default: null },
   gps: { type: GpsSchema, required: true },
   healthStatus: { 

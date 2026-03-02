@@ -91,10 +91,12 @@ const login = async (req, res) => {
     // ── Sign JWT ──────────────────────────────────────────────────
     const token = jwt.sign(
       {
-        userId:   user._id,
-        role:     user.role,
-        email:    user.email,
-        platform: platform,
+        userId:    user._id,
+        role:      user.role,
+        email:     user.email,
+        platform:  platform,
+        firstName: user.firstName,
+        lastName:  user.lastName,
       },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
