@@ -1,85 +1,204 @@
-// models/Investor.js
+// app/models/Investor.js
 const mongoose = require('mongoose');
 
-const investorSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Name is required'],
-    trim: true,
+// ===============================
+// INVESTED TREE SCHEMA
+// ===============================
+const InvestorTreeSchema = new mongoose.Schema({
+  tree: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Tree',
+    required: true
   },
-  email: {
+  treeId: {
     type: String,
-    required: [true, 'Email is required'],
-    unique: true,
-    lowercase: true,
-    trim: true,
+    required: true
   },
-  phone: {
+  investedAt: {
+    type: Date,
+    default: Date.now
+  }
+}, { _id: false });
+
+// ===============================
+// CERTIFICATE REFERENCE SCHEMA
+// ===============================
+const CertificateRefSchema = new mongoose.Schema({
+  certificate: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Certificate',
+    required: true
+  },
+  certificateId: {
     type: String,
-    required: [true, 'Phone is required'],
+    required: true
   },
-  investment: {
+  certificateNumber: {
+    type: String
+  },
+  type: {
+    type: String,
+    enum: ['HARVEST', 'TREE_OWNERSHIP', 'PLANTATION', 'GROWTH'],
+    default: 'HARVEST'
+  },
+  issuedDate: {
+    type: Date,
+    default: Date.now
+  },
+  treeCount: {
     type: Number,
-    required: [true, 'Investment amount is required'],
-    min: 0,
+    default: 0
+  },
+  totalResinYield: {
+    type: Number,
+    default: 0
+  },
+  blockchainTxHash: {
+    type: String
   },
   status: {
     type: String,
-    enum: ['active', 'inactive', 'pending'],
-    default: 'active',
-  },
-  
-  // Blockchain Integration Fields
-  blockchainHash: {
-    type: String,
-    sparse: true,
-    index: true
-  },
-  blockchainBlockIndex: {
-    type: Number,
-    default: -1
-  },
-  lastBlockchainVerification: {
-    type: Date
-  },
-  
-  // Audit Fields
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-  },
-  updatedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now,
-  },
-});
+    enum: ['ACTIVE', 'REVOKED', 'EXPIRED'],
+    default: 'ACTIVE'
+  }
+}, { _id: false });
 
-investorSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
+// ===============================
+// INVESTOR SCHEMA
+// ===============================
+const InvestorSchema = new mongoose.Schema({
+  investorId: {
+    type: String,
+    unique: true
+  },
+
+  name: {
+    type: String,
+    required: true
+  },
+
+  email: {
+    type: String,
+    required: true,
+    unique: true
+  },
+
+  phone: {
+    type: String,
+    required: true
+  },
+
+  // ===============================
+  // ✅ FIX #3: INVESTMENT AS SIMPLE NUMBER
+  // ===============================
+  investment: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+
+  // ===============================
+  // INVESTED TREES LIST
+  // ===============================
+  investedTrees: [InvestorTreeSchema],
+
+  // ===============================
+  // CERTIFICATES LIST
+  // ===============================
+  certificates: [CertificateRefSchema],
+
+  status: {
+    type: String,
+    enum: ['active', 'inactive'],
+    default: 'active'
+  }
+}, { timestamps: true });
+
+/* ======================================
+   AUTO INVESTOR ID
+====================================== */
+InvestorSchema.pre('save', async function (next) {
+  if (this.isNew && !this.investorId) {
+    const last = await this.constructor.findOne().sort({ createdAt: -1 });
+    const nextNum = last ? parseInt(last.investorId.split('-')[1]) + 1 : 1;
+    this.investorId = `INV-${nextNum.toString().padStart(4, '0')}`;
+  }
   next();
 });
 
-// Virtual for blockchain verification status
-investorSchema.virtual('isBlockchainVerified').get(function() {
-  return !!this.blockchainHash && this.lastBlockchainVerification;
+/* ======================================
+   VIRTUAL: HARVESTED TREES COUNT
+====================================== */
+InvestorSchema.virtual('harvestedTreesCount').get(function() {
+  return this.certificates.reduce((sum, cert) => sum + cert.treeCount, 0);
 });
 
-// Static method to get investors with blockchain status
-investorSchema.statics.getWithBlockchainStatus = async function() {
-  const investors = await this.find().lean();
-  return investors.map(investor => ({
-    ...investor,
-    blockchainStatus: investor.blockchainHash ? 'VERIFIED' : 'PENDING',
-    verificationTimestamp: investor.lastBlockchainVerification
-  }));
+/* ======================================
+   VIRTUAL: TOTAL RESIN YIELD
+====================================== */
+InvestorSchema.virtual('totalResinYield').get(function() {
+  return this.certificates.reduce((sum, cert) => sum + cert.totalResinYield, 0);
+});
+
+/* ======================================
+   METHOD: ADD TREE
+====================================== */
+InvestorSchema.methods.addTree = async function (tree) {
+  const exists = this.investedTrees.find(t => t.tree.toString() === tree._id.toString());
+  if (exists) {
+    throw new Error('Tree already added to investor');
+  }
+
+  this.investedTrees.push({
+    tree: tree._id,
+    treeId: tree.treeId
+  });
+
+  await this.save();
 };
 
-module.exports = mongoose.model('Investor', investorSchema);
+/* ======================================
+   METHOD: REMOVE TREE
+====================================== */
+InvestorSchema.methods.removeTree = async function (treeId) {
+  this.investedTrees = this.investedTrees.filter(t => t.treeId !== treeId);
+  await this.save();
+};
+
+/* ======================================
+   METHOD: ADD CERTIFICATE
+====================================== */
+InvestorSchema.methods.addCertificate = async function (certificate, treeCount, totalResinYield) {
+  const exists = this.certificates.find(
+    c => c.certificate.toString() === certificate._id.toString()
+  );
+  
+  if (exists) {
+    throw new Error('Certificate already added to investor');
+  }
+
+  this.certificates.push({
+    certificate: certificate._id,
+    certificateId: certificate.certificateId,
+    certificateNumber: certificate.certificateNumber,
+    type: certificate.type,
+    issuedDate: certificate.issueDate,
+    treeCount: treeCount || 0,
+    totalResinYield: totalResinYield || 0,
+    blockchainTxHash: certificate.blockchain?.transactionHash,
+    status: certificate.status
+  });
+
+  await this.save();
+};
+
+/* ======================================
+   STATIC: FIND WITH CERTIFICATES
+====================================== */
+InvestorSchema.statics.findWithCertificates = function(investorId) {
+  return this.findById(investorId)
+    .populate('investedTrees.tree')
+    .populate('certificates.certificate');
+};
+
+module.exports = mongoose.model('Investor', InvestorSchema);

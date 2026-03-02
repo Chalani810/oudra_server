@@ -36,6 +36,7 @@ const iotRoutes = require('./app/routes/iotRoutes');
 // Blockchain routes
 const investorRoutes = require("./app/routes/investorRoutes");
 const blockchainRoutes = require("./app/routes/blockchainRoutes");
+const certificateRoutes = require("./app/routes/certificateRoutes");
 
 //Task Management routes
 const taskRoutes = require("./app/routes/taskRoutes");
@@ -153,6 +154,7 @@ app.use('/api', iotRoutes);
 // Blockchain routes
 app.use("/api/investors", investorRoutes);
 app.use("/api/blockchain", blockchainRoutes);
+app.use("/api/certificates", certificateRoutes);
 
 // Oudra project routes
 app.use("/employee", employeeRoutes);
