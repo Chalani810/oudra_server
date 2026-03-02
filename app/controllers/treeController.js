@@ -205,6 +205,18 @@ function autoUpdateLifecycleStatus(treeData, updates) {
   return { lifecycleStatus, readyForInoculation, readyForHarvest };
 }
 
+function buildDisplayName(reqUser) {
+  if (!reqUser) return 'field-worker';
+  const { firstName, lastName, userId } = reqUser;
+  if (firstName && lastName && userId) {
+    return `${firstName} ${lastName} (${userId})`;
+  }
+  if (firstName && userId) {
+    return `${firstName} (${userId})`;
+  }
+  return userId || 'field-worker';
+}
+
 // Create a new tree - UPDATED: No NFC, GPS, or status inputs from web
 exports.createTree = async (req, res) => {
   try {
@@ -464,7 +476,7 @@ exports.mobileUpdateTreeProfile = async (req, res) => {
       healthStatus, 
       inoculationCount,
       block,
-      lastUpdatedBy 
+      lastUpdatedBy   // still accepted from body for backward compat 
     } = req.body;
 
     const tree = await Tree.findOne({ treeId }).exec();
@@ -482,7 +494,7 @@ exports.mobileUpdateTreeProfile = async (req, res) => {
 
     // Prepare updates - field workers can update these
     const updates = {
-      lastUpdatedBy: lastUpdatedBy || 'field-worker',
+      lastUpdatedBy: buildDisplayName(req.user) || lastUpdatedBy || 'field-worker',
       lastUpdatedAt: new Date(),
       updatedAt: new Date()
     };
@@ -533,7 +545,7 @@ exports.mobileUpdateTreeProfile = async (req, res) => {
         block: tree.block
       },
       newValue: updates,
-      changedBy: lastUpdatedBy || 'field-worker',
+      changedBy: buildDisplayName(req.user) || lastUpdatedBy || 'field-worker',
       notes: 'Tree profile updated via mobile app',
       timestamp: new Date(),
       device: 'mobile'
@@ -554,81 +566,7 @@ exports.mobileUpdateTreeProfile = async (req, res) => {
   }
 };
 
-// Mobile app endpoint for field worker updates - ALL IN ONE
-exports.mobileUpdateTree = async (req, res) => {
-  try {
-    const { treeId } = req.params;
-    const { 
-      nfcTagId,
-      healthStatus, 
-      lifecycleStatus, // This should come from auto-calculation, not from mobile
-      inoculationCount,
-      gps,
-      observedBy,
-      notes 
-    } = req.body;
-
-    const tree = await Tree.findOne({ treeId }).exec();
-    if (!tree) return res.status(404).json({ message: 'Tree not found' });
-
-    const updates = {
-      lastUpdatedAt: new Date(),
-      updatedAt: new Date(),
-      lastUpdatedBy: observedBy || 'field-worker'
-    };
-
-    // Field workers can update these fields:
-    if (nfcTagId !== undefined) {
-      updates.nfcTagId = nfcTagId;
-      updates.offlineUpdated = true;
-    }
-    
-    if (healthStatus) updates.healthStatus = healthStatus;
-    if (inoculationCount !== undefined) updates.inoculationCount = inoculationCount;
-    if (gps) updates.gps = gps;
-
-    // Apply auto lifecycle logic - CRITICAL: Override any mobile-sent lifecycleStatus
-    const lifecycleUpdates = autoUpdateLifecycleStatus(tree.toObject(), updates);
-    Object.assign(updates, lifecycleUpdates);
-
-    // Update the tree
-    Object.assign(tree, updates);
-    await tree.save();
-
-    // Add to tree history
-    const history = new TreeHistory({
-      treeId,
-      actionType: 'ManualEdit',
-      newValue: updates,
-      changedBy: observedBy || 'field-worker',
-      notes: notes || 'Tree updated via mobile app',
-      timestamp: new Date(),
-      device: 'mobile'
-    });
-    await history.save();
-
-    // If NFC was assigned/unassigned, add specific history entry
-    if (nfcTagId !== undefined) {
-      const nfcHistory = new TreeHistory({
-        treeId,
-        actionType: 'ManualEdit',
-        newValue: { nfcTagId },
-        changedBy: observedBy || 'field-worker',
-        notes: nfcTagId ? `NFC tag ${nfcTagId} assigned` : 'NFC tag unassigned',
-        timestamp: new Date(),
-        device: 'mobile'
-      });
-      await nfcHistory.save();
-    }
-    
-    return res.json(tree);
-  } catch (err) {
-    console.error('mobileUpdateTree error:', err);
-    return res.status(500).json({ message: err.message });
-  }
-};
-
-// Mobile app endpoint for field worker updates - NEW FUNCTION
+// Mobile app endpoint for field worker updates
 exports.mobileUpdateTree = async (req, res) => {
   try {
     const { treeId } = req.params;
@@ -648,7 +586,7 @@ exports.mobileUpdateTree = async (req, res) => {
     const updates = {
       lastUpdatedAt: new Date(),
       updatedAt: new Date(),
-      lastUpdatedBy: observedBy || 'field-worker'
+      lastUpdatedBy: buildDisplayName(req.user) || observedBy || 'field-worker'
     };
 
     // Field workers can update these fields:
@@ -675,7 +613,7 @@ exports.mobileUpdateTree = async (req, res) => {
       treeId,
       actionType: 'ManualEdit',
       newValue: updates,
-      changedBy: observedBy || 'field-worker',
+      changedBy: buildDisplayName(req.user) || observedBy || 'field-worker',
       notes: notes || 'Tree updated via mobile app',
       timestamp: new Date(),
       device: 'mobile'
@@ -1130,20 +1068,28 @@ exports.addObservation = async (req, res) => {
     const { treeId } = req.params;
     const { notes, images, healthStatus, observedBy, type } = req.body;
 
-    if (!notes || !observedBy) {
-      return res.status(400).json({ message: 'Notes and observedBy are required' });
+    if (!notes) {
+      return res.status(400).json({ message: 'Notes are required' });
+    }
+
+    // Use JWT user display name if available, otherwise fall back to body value
+    const callerDisplayName = buildDisplayName(req.user) || observedBy;
+    if (!callerDisplayName) {
+      return res.status(400).json({ message: 'observedBy is required' });
     }
 
     const observation = new Observation({
       observationId: `OBS-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       treeId,
       notes,
-      images: images || [],
+      // FIX: Accept base64 strings or URLs — store whatever arrives in the array
+      images: Array.isArray(images) ? images : [],
       healthStatus: healthStatus || 'Healthy',
-      observedBy,
+      observedBy: callerDisplayName,
       type: type || 'Routine',
       timestamp: new Date(),
-      canEdit: true
+      canEdit: true,
+      lastUpdatedAt: new Date(),
     });
 
     await observation.save();
@@ -1152,15 +1098,16 @@ exports.addObservation = async (req, res) => {
     const history = new TreeHistory({
       treeId,
       actionType: 'NoteAdded',
-      newValue: { 
+      newValue: {
         observationId: observation.observationId,
         notes: notes.substring(0, 100) + (notes.length > 100 ? '...' : ''),
-        healthStatus: healthStatus || 'Healthy'
+        type: type || 'Routine',
+        imagesCount: observation.images.length,
       },
-      changedBy: observedBy,
+      changedBy: callerDisplayName,
       notes: 'Field note added',
       timestamp: new Date(),
-      device: 'mobile'
+      device: 'mobile',
     });
     await history.save();
 
@@ -1174,42 +1121,46 @@ exports.addObservation = async (req, res) => {
 exports.updateObservation = async (req, res) => {
   try {
     const { observationId } = req.params;
-    const { notes, images, lastUpdatedBy } = req.body;
-
-    if (!lastUpdatedBy) {
-      return res.status(400).json({ message: 'lastUpdatedBy is required' });
-    }
+    // FIX: also accept 'type' in the update payload
+    const { notes, images, type, lastUpdatedBy } = req.body;
 
     const observation = await Observation.findOne({ observationId });
     if (!observation) {
       return res.status(404).json({ message: 'Observation not found' });
     }
 
-    // Check if user can edit (only original author)
-    if (observation.observedBy !== lastUpdatedBy) {
-      return res.status(403).json({ message: 'Cannot edit other users notes' });
+    const callerDisplayName = buildDisplayName(req.user) || lastUpdatedBy;
+
+    // FIX: relaxed author check — compare trimmed lowercase so minor
+    // differences in whitespace or case don't block legitimate edits
+    const storedAuthor = (observation.observedBy || '').trim().toLowerCase();
+    const callerName   = (callerDisplayName || '').trim().toLowerCase();
+
+    if (storedAuthor && callerName && storedAuthor !== callerName) {
+      return res.status(403).json({ message: 'Cannot edit another user\'s note' });
     }
 
     const oldNotes = observation.notes;
-    
-    observation.notes = notes;
-    if (images) observation.images = images;
-    observation.lastUpdatedBy = lastUpdatedBy;
+
+    if (notes    !== undefined) observation.notes  = notes;
+    if (type     !== undefined) observation.type   = type;   // FIX: persist type change
+    if (images   !== undefined) observation.images = Array.isArray(images) ? images : [];
+
+    observation.lastUpdatedBy = callerDisplayName;
     observation.lastUpdatedAt = new Date();
 
     await observation.save();
 
-    // Add to history if notes changed significantly
     if (oldNotes !== notes) {
       const history = new TreeHistory({
         treeId: observation.treeId,
         actionType: 'NoteAdded',
         oldValue: { notes: oldNotes.substring(0, 100) + (oldNotes.length > 100 ? '...' : '') },
-        newValue: { notes: notes.substring(0, 100) + (notes.length > 100 ? '...' : '') },
-        changedBy: lastUpdatedBy,
+        newValue: { notes: (notes || '').substring(0, 100) + ((notes || '').length > 100 ? '...' : '') },
+        changedBy: callerDisplayName,
         notes: 'Field note updated',
         timestamp: new Date(),
-        device: 'mobile'
+        device: 'mobile',
       });
       await history.save();
     }
@@ -1226,18 +1177,19 @@ exports.deleteObservation = async (req, res) => {
     const { observationId } = req.params;
     const { deletedBy } = req.body;
 
-    if (!deletedBy) {
-      return res.status(400).json({ message: 'deletedBy is required' });
-    }
-
     const observation = await Observation.findOne({ observationId });
     if (!observation) {
       return res.status(404).json({ message: 'Observation not found' });
     }
 
-    // Check if user can delete (only original author)
-    if (observation.observedBy !== deletedBy) {
-      return res.status(403).json({ message: 'Cannot delete other users notes' });
+    const callerDisplayName = buildDisplayName(req.user) || deletedBy;
+
+    // FIX: same relaxed case-insensitive author check as update
+    const storedAuthor = (observation.observedBy || '').trim().toLowerCase();
+    const callerName   = (callerDisplayName || '').trim().toLowerCase();
+
+    if (storedAuthor && callerName && storedAuthor !== callerName) {
+      return res.status(403).json({ message: 'Cannot delete another user\'s note' });
     }
 
     await Observation.deleteOne({ observationId });
@@ -1246,14 +1198,14 @@ exports.deleteObservation = async (req, res) => {
     const history = new TreeHistory({
       treeId: observation.treeId,
       actionType: 'NoteAdded',
-      oldValue: { 
+      oldValue: {
         observationId,
-        notes: observation.notes.substring(0, 100) + (observation.notes.length > 100 ? '...' : '')
+        notes: observation.notes.substring(0, 100) + (observation.notes.length > 100 ? '...' : ''),
       },
-      changedBy: deletedBy,
+      changedBy: callerDisplayName,
       notes: 'Field note deleted',
       timestamp: new Date(),
-      device: 'mobile'
+      device: 'mobile',
     });
     await history.save();
 
