@@ -2,35 +2,34 @@
 const express = require('express');
 const router = express.Router();
 const treeController = require('../controllers/treeController');
+const authMiddleware = require('../middleware/authMiddleware');
+const { platformMiddleware, roleMiddleware } = authMiddleware;
 
 // ===== TREE CRUD OPERATIONS =====
-router.post('/trees', treeController.createTree);
-router.get('/trees', treeController.getAllTrees);
-router.get('/trees/:treeId', treeController.getTreeById);
-router.put('/trees/:treeId', treeController.updateTree);
-router.delete('/trees/:treeId', treeController.deleteTree);
-router.put('/trees/:treeId/profile', treeController.updateTreeProfile);
+router.post('/trees',               authMiddleware, platformMiddleware('web'),    roleMiddleware('manager'), treeController.createTree);
+router.get('/trees',                authMiddleware,                                                          treeController.getAllTrees);
+router.get('/trees/:treeId',        authMiddleware,                                                          treeController.getTreeById);
+router.put('/trees/:treeId',        authMiddleware, platformMiddleware('web'),    roleMiddleware('manager'), treeController.updateTree);
+router.delete('/trees/:treeId',     authMiddleware, platformMiddleware('web'),    roleMiddleware('manager'), treeController.deleteTree);
+router.put('/trees/:treeId/profile',authMiddleware, platformMiddleware('web'),    roleMiddleware('manager'), treeController.updateTreeProfile);
 
 // ===== SPECIALIZED UPDATES =====
-router.put('/trees/:treeId/inspection', treeController.updateInspection);
-router.put('/trees/:treeId/lifecycle', treeController.updateLifecycle);
-router.put('/trees/:treeId/nfc', treeController.updateNFCTag);
-router.put('/trees/:treeId/gps', treeController.updateGPS);
-router.put('/trees/:treeId/archive', treeController.archiveTree);
-router.put('/trees/:treeId/mobile-update', treeController.mobileUpdateTree);
-router.put('/trees/:treeId/mobile-profile', treeController.mobileUpdateTreeProfile);
+router.put('/trees/:treeId/inspection',     authMiddleware, platformMiddleware('mobile'), treeController.updateInspection);
+router.put('/trees/:treeId/lifecycle',      authMiddleware, platformMiddleware('mobile'), treeController.updateLifecycle);
+router.put('/trees/:treeId/nfc',            authMiddleware, platformMiddleware('mobile'), treeController.updateNFCTag);
+router.put('/trees/:treeId/gps',            authMiddleware, platformMiddleware('mobile'), treeController.updateGPS);
+router.put('/trees/:treeId/archive',        authMiddleware, platformMiddleware('web'),    roleMiddleware('manager'), treeController.archiveTree);
+router.put('/trees/:treeId/mobile-update',  authMiddleware, platformMiddleware('mobile'), treeController.mobileUpdateTree);
+router.put('/trees/:treeId/mobile-profile', authMiddleware, platformMiddleware('mobile'), treeController.mobileUpdateTreeProfile);
 
 // ===== FIELD NOTES / OBSERVATIONS =====
-router.get('/trees/:treeId/observations', treeController.getTreeObservations);
-router.post('/trees/:treeId/observations', treeController.addObservation);
-router.put('/observations/:observationId', treeController.updateObservation);
-router.delete('/observations/:observationId', treeController.deleteObservation);
-
-router.put('/observations/:observationId', treeController.updateObservation);
-router.delete('/observations/:observationId', treeController.deleteObservation);
+router.get('/trees/:treeId/observations',     authMiddleware,                            treeController.getTreeObservations);
+router.post('/trees/:treeId/observations',    authMiddleware, platformMiddleware('mobile'), treeController.addObservation);
+router.put('/observations/:observationId',    authMiddleware, platformMiddleware('mobile'), treeController.updateObservation);
+router.delete('/observations/:observationId', authMiddleware, platformMiddleware('mobile'), treeController.deleteObservation);
 
 // ===== TREE HISTORY =====
-router.get('/trees/:treeId/history', treeController.getTreeHistory);
-router.get('/trees/:treeId/history/filtered', treeController.getAllTreeHistory);
+router.get('/trees/:treeId/history',          authMiddleware, treeController.getTreeHistory);
+router.get('/trees/:treeId/history/filtered', authMiddleware, treeController.getAllTreeHistory);
 
 module.exports = router;
