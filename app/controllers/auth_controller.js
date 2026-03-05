@@ -1,14 +1,4 @@
 // oudra-server/app/controllers/auth_controller.js
-// CHANGES FROM GLIMMER:
-//  1. register() removed (no public self-registration in Oudra)
-//  2. login() updated: 
-//       - Accepts "platform" in request body
-//       - Validates platform vs role (fieldworkers → mobile only, manager/investor → web only)
-//       - JWT token now includes { userId, role, email, platform }
-//  3. createManagedAccount() added: Manager creates accounts for investors/fieldworkers
-//  4. requestPasswordReset() and resetPassword() kept as-is (minimal changes)
-//  5. Removed getAllUsers Glimmer logic (loyalty points / checkout checks)
-
 const User     = require("../models/User");
 const Employee = require("../models/Employee");
 const Investor = require("../models/Investor");
