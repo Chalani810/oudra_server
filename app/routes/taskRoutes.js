@@ -1,4 +1,5 @@
 // oudra-server/app/routes/taskRoutes.js
+
 const express = require("express");
 const {
   createTask,
@@ -8,21 +9,25 @@ const {
   deleteTask,
   getTasksForEmployee,
   updateTaskStatus,
-  getTaskStats
+  getTaskStats,
 } = require("../controllers/taskController");
 
 const router = express.Router();
 
-// Public routes (will add auth middleware later)
-router.post("/", createTask);
-router.get("/", getAllTasks);
-router.get("/stats", getTaskStats);
-router.get("/:id", getTaskById);
-router.put("/:id", updateTask);
-router.delete("/:id", deleteTask);
+// ── Non-wildcard routes first ──────────────────────────────────────────────
+router.post("/",      createTask);
+router.get("/",       getAllTasks);
+router.get("/stats",  getTaskStats);
 
-// Mobile app specific routes
+// Mobile app: get all tasks assigned to a specific employee
+// MUST be before /:id or Express will match "employee" as an id
 router.get("/employee/:employeeId", getTasksForEmployee);
-router.put("/:id/status", updateTaskStatus);
+
+// ── Wildcard /:id routes last ──────────────────────────────────────────────
+
+router.get("/:id",         getTaskById);
+router.put("/:id",         updateTask);
+router.delete("/:id",      deleteTask);
+router.put("/:id/status",  updateTaskStatus);
 
 module.exports = router;
