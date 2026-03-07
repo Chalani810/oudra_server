@@ -24,7 +24,6 @@ class BlockchainService {
         console.log('✅ Contract ABI loaded from file');
       } else {
         console.warn('⚠️  TreeCertificate.json not found, using fallback ABI');
-        // Fallback to minimal ABI if file doesn't exist
         contractABI = [
           {
             "inputs": [
@@ -56,8 +55,11 @@ class BlockchainService {
       // Setup wallet
       this.wallet = new ethers.Wallet(privateKey, provider);
 
-      // Setup contract
-      this.contractAddress = process.env.CONTRACT_ADDRESS || "0xa031690639844b131FC96360fD41516a8A24d541";
+      // ✅ Fixed: use AGARWOOD_REGISTRY_ADDRESS first, then CONTRACT_ADDRESS fallback
+      this.contractAddress = 
+        process.env.AGARWOOD_REGISTRY_ADDRESS ||
+        process.env.CONTRACT_ADDRESS ||
+        "0x331afe80b9d842a838903630a77fc51d148909e8";
       
       this.contract = new ethers.Contract(
         this.contractAddress,
@@ -76,13 +78,9 @@ class BlockchainService {
     }
   }
 
-  // Updated to match your new contract signature
   async issueCertificate(certificateId, ownerAddress, metadataURI) {
     if (!this.enabled) {
-      return {
-        success: false,
-        error: 'Blockchain service not enabled'
-      };
+      return { success: false, error: 'Blockchain service not enabled' };
     }
 
     try {
@@ -91,19 +89,16 @@ class BlockchainService {
       console.log('   Owner:', ownerAddress);
       console.log('   Metadata URI:', metadataURI);
 
-      // Call the new contract function with all 5 parameters
       const tx = await this.contract.issueCertificate(
         certificateId,
         ownerAddress,
-        certificateId, // Using certificateId as treeId for now
-        metadataURI || 'Not specified', // location
-        'Tree' // treeSpecies - you can make this dynamic
+        certificateId,
+        metadataURI || 'Not specified',
+        'Tree'
       );
 
       console.log('📤 Transaction sent:', tx.hash);
-
       const receipt = await tx.wait();
-
       console.log('✅ Certificate issued on blockchain!');
       console.log('   Block:', receipt.blockNumber);
       console.log('   Gas used:', receipt.gasUsed.toString());
@@ -118,30 +113,19 @@ class BlockchainService {
 
     } catch (error) {
       console.error('❌ Blockchain error:', error);
-      return {
-        success: false,
-        error: error.message || error.toString()
-      };
+      return { success: false, error: error.message || error.toString() };
     }
   }
 
-  // Verify certificate by transaction hash
   async verifyCertificate(transactionHash) {
     if (!this.enabled) {
-      return {
-        success: false,
-        error: 'Blockchain service not enabled'
-      };
+      return { success: false, error: 'Blockchain service not enabled' };
     }
 
     try {
       const receipt = await this.wallet.provider.getTransactionReceipt(transactionHash);
-
       if (!receipt) {
-        return {
-          success: false,
-          error: 'Transaction not found'
-        };
+        return { success: false, error: 'Transaction not found' };
       }
 
       return {
@@ -158,17 +142,12 @@ class BlockchainService {
 
     } catch (error) {
       console.error('❌ Verification error:', error.message);
-      return {
-        success: false,
-        error: error.message
-      };
+      return { success: false, error: error.message };
     }
   }
 
-  // Get wallet balance
   async getBalance() {
     if (!this.enabled) return '0';
-
     try {
       const balance = await this.wallet.provider.getBalance(this.wallet.address);
       return ethers.formatEther(balance);
@@ -178,13 +157,9 @@ class BlockchainService {
     }
   }
 
-  // Check connection status
   async checkConnection() {
     if (!this.enabled) {
-      return {
-        connected: false,
-        error: 'Blockchain service not enabled'
-      };
+      return { connected: false, error: 'Blockchain service not enabled' };
     }
 
     try {
@@ -203,10 +178,7 @@ class BlockchainService {
       };
 
     } catch (error) {
-      return {
-        connected: false,
-        error: error.message
-      };
+      return { connected: false, error: error.message };
     }
   }
 }

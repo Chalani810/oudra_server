@@ -13,6 +13,7 @@ const {
   login,
   createManagedAccount,
   getCurrentUser,
+  changePassword,
   getAllUsers,
   toggleUserStatus,
   requestPasswordReset,
@@ -51,6 +52,9 @@ router.use(authMiddleware);
 
 // Get current logged-in user profile
 router.get("/me", getCurrentUser);
+
+// ✅ NEW: Change password (investor & employee)
+router.post("/change-password", changePassword);
 
 // Create a login account for an investor or field worker
 // Only managers (web) can do this

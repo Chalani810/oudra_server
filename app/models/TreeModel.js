@@ -41,6 +41,17 @@ const TreeSchema = new mongoose.Schema({
   inoculationCount: { type: Number, default: 0 },
   readyForInoculation: { type: Boolean, default: false },
   readyForHarvest: { type: Boolean, default: false },
+   blockchainStatus: { 
+    type: String, 
+    enum: ['Unverified', 'Pending', 'Verified'], 
+    default: 'Unverified' 
+  },
+
+  blockchainTxHash: { 
+    type: String, 
+    default: null 
+  },
+
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
@@ -49,5 +60,6 @@ TreeSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
 });
+
 
 module.exports = mongoose.model('Tree', TreeSchema);
