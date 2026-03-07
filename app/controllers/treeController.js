@@ -1,71 +1,13 @@
 
 const Tree = require('../models/TreeModel');
-const AutoIncrementTreeIdCount = require('../models/AutoIncrementTreeIdCount');
 const Observation = require('../models/Observations');
 const TreeHistory = require('../models/TreeHistory');
 
-// Helper to get next sequence number for treeId - FIXED VERSION
-async function getNextTreeSequence() {
-  try {
-    // Get all existing tree IDs to find gaps from deletions
-    const existingTrees = await Tree.find({}, 'treeId').sort({ treeId: 1 }).lean();
-    const existingIds = existingTrees.map(tree => {
-      const num = parseInt(tree.treeId.replace('T-', ''));
-      return isNaN(num) ? 0 : num;
-    }).filter(num => num > 0).sort((a, b) => a - b);
+const { getNextAvailableNumber, buildTreeId } = require('./autoIncrementController');
 
-    console.log('Existing Tree IDs:', existingIds); // Debug log
-
-    // Find the first gap or use the next sequential number
-    let nextId = 1;
-    for (let i = 0; i < existingIds.length; i++) {
-      if (existingIds[i] !== i + 1) {
-        nextId = i + 1;
-        break;
-      }
-      nextId = existingIds[i] + 1;
-    }
-
-    console.log('Calculated nextId from gaps:', nextId); // Debug log
-
-    // Get current counter
-    const currentCounter = await AutoIncrementTreeIdCount.findOne({ _id: 'tree' });
-    console.log('Current counter seq:', currentCounter?.seq); // Debug log
-
-    // If we found a gap, use that ID and update counter to be one more than the gap
-    if (!currentCounter || currentCounter.seq < nextId) {
-      const updatedCounter = await AutoIncrementTreeIdCount.findOneAndUpdate(
-        { _id: 'tree' },
-        { seq: nextId + 1 }, // Set counter to NEXT number after the gap
-        { new: true, upsert: true }
-      );
-      console.log('Updated counter for gap:', updatedCounter.seq); // Debug log
-      return nextId;
-    }
-
-    // If no gaps found, use and increment the counter normally
-    const doc = await AutoIncrementTreeIdCount.findOneAndUpdate(
-      { _id: 'tree' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true }
-    );
-    console.log('Using counter seq:', doc.seq); // Debug log
-    return doc.seq - 1; // Return the value BEFORE increment (since we want the current number)
-    
-  } catch (error) {
-    console.error('Error in getNextTreeSequence:', error);
-    // Fallback to original method
-    const doc = await AutoIncrementTreeIdCount.findOneAndUpdate(
-      { _id: 'tree' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true }
-    );
-    return doc.seq;
-  }
-}
-
-function formatTreeId(seq) {
-  return `T-${String(seq).padStart(6, '0')}`;
+async function getNextTreeId(block) {
+  const num = await getNextAvailableNumber();
+  return buildTreeId(block, num);
 }
 
 // Helper function to calculate tree age in years and months
@@ -232,8 +174,7 @@ exports.createTree = async (req, res) => {
     const lastUpdatedBy = userData.userId ? `${userData.userId} - ${userData.name || 'Manager'}` : 'web-admin';
 
     // Generate tree ID
-    const seq = await getNextTreeSequence();
-    const treeId = formatTreeId(seq);
+    const treeId = await getNextTreeId(block);
 
     // Set current date as planted date
     const plantedDate = new Date();
