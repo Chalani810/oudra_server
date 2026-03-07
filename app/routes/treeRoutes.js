@@ -8,6 +8,7 @@ const { platformMiddleware, roleMiddleware } = authMiddleware;
 // ===== TREE CRUD OPERATIONS =====
 router.post('/trees',               authMiddleware, platformMiddleware('web'),    roleMiddleware('manager'), treeController.createTree);
 router.get('/trees',                authMiddleware,                                                          treeController.getAllTrees);
+router.get('/trees/by-nfc/:nfcTagId', authMiddleware, treeController.getTreeByNFCTag);
 router.get('/trees/:treeId',        authMiddleware,                                                          treeController.getTreeById);
 router.put('/trees/:treeId',        authMiddleware, platformMiddleware('web'),    roleMiddleware('manager'), treeController.updateTree);
 router.delete('/trees/:treeId',     authMiddleware, platformMiddleware('web'),    roleMiddleware('manager'), treeController.deleteTree);
