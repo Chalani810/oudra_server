@@ -1197,3 +1197,35 @@ exports.getAllTreeHistory = async (req, res) => {
     return res.status(500).json({ message: err.message });
   }
 };
+
+// Get tree by NFC tag content (the treeId written on the card, e.g. "TB-000023")
+exports.getTreeByNFCTag = async (req, res) => {
+  try {
+    const { nfcTagId } = req.params;
+    
+    // First try: the card stores the treeId directly (e.g. "TB-000023")
+    let tree = await Tree.findOne({ treeId: nfcTagId }).lean().exec();
+    
+    // Second try: the card stores the nfcTagId field value
+    if (!tree) {
+      tree = await Tree.findOne({ nfcTagId: nfcTagId }).lean().exec();
+    }
+    
+    if (!tree) {
+      return res.status(404).json({ 
+        message: `No tree found for NFC tag: ${nfcTagId}` 
+      });
+    }
+    
+    // Return tree with calculated fields
+    const ageData = calculateTreeAge(tree.plantedDate);
+    return res.json({
+      ...tree,
+      calculatedAge: ageData,
+      calculatedLifecycleStatus: determineLifecycleStatus(tree)
+    });
+  } catch (err) {
+    console.error('getTreeByNFCTag error:', err);
+    return res.status(500).json({ message: err.message });
+  }
+};
