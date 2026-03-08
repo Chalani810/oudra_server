@@ -27,4 +27,5 @@ router.get('/:id', getEmployeeById);
 router.put("/:id", upload.single("profileImg"), updateEmployee);
 router.delete("/:id", deleteEmployee);
 
+
 module.exports = router;
