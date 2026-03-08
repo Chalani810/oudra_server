@@ -84,7 +84,6 @@ exports.getInvestorById = async (req, res) => {
 };
 
 // ─── CREATE ───────────────────────────────────────────────────────────────────
-// ✅ Now handles treeIds — assigns trees on creation
 exports.createInvestor = async (req, res) => {
   try {
     const { name, email, phone, investment, status, treeIds } = req.body;
@@ -113,12 +112,12 @@ exports.createInvestor = async (req, res) => {
       status: status || 'active'
     });
 
-    // ✅ Assign trees if provided
+    // Assign trees if provided
     if (treeIds && treeIds.length > 0) {
       const trees = await Tree.find({ _id: { $in: treeIds } });
 
       for (const tree of trees) {
-        if (tree.investor) continue; // Skip already assigned trees
+        if (tree.investor) continue;
 
         tree.investor     = investor._id;
         tree.investorId   = investor.investorId;
@@ -151,7 +150,6 @@ exports.updateInvestor = async (req, res) => {
     const investor = await Investor.findById(req.params.id);
     if (!investor) return res.status(404).json({ success: false, message: 'Investor not found' });
 
-    // Check email uniqueness (exclude self)
     if (email && email.toLowerCase().trim() !== investor.email) {
       const dup = await Investor.findOne({
         email: email.toLowerCase().trim(),
@@ -179,7 +177,6 @@ exports.deleteInvestor = async (req, res) => {
     const investor = await Investor.findById(req.params.id);
     if (!investor) return res.status(404).json({ success: false, message: 'Investor not found' });
 
-    // Unassign all trees first
     for (const inv of investor.investedTrees) {
       const tree = await Tree.findById(inv.tree);
       if (tree) {
@@ -197,7 +194,7 @@ exports.deleteInvestor = async (req, res) => {
   }
 };
 
-// ─── GET AVAILABLE TREES (unassigned only) ────────────────────────────────────
+// ─── GET AVAILABLE TREES ──────────────────────────────────────────────────────
 exports.getAvailableTrees = async (req, res) => {
   try {
     const trees = await Tree.find({

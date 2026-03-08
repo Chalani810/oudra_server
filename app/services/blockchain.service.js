@@ -2,6 +2,7 @@
 const { ethers } = require('ethers');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 class BlockchainService {
   constructor() {
@@ -55,7 +56,6 @@ class BlockchainService {
       // Setup wallet
       this.wallet = new ethers.Wallet(privateKey, provider);
 
-      // ✅ Fixed: use AGARWOOD_REGISTRY_ADDRESS first, then CONTRACT_ADDRESS fallback
       this.contractAddress = 
         process.env.AGARWOOD_REGISTRY_ADDRESS ||
         process.env.CONTRACT_ADDRESS ||
@@ -179,6 +179,87 @@ class BlockchainService {
 
     } catch (error) {
       return { connected: false, error: error.message };
+    }
+  }
+
+  // ─── FEATURE 1: Record Investment Contract Hash ─────────────────────────────
+  // Stores a SHA256 hash of the investment agreement on-chain as a special entry
+  // ID format: INV-<investorId>  |  GPS field: SHA256 hash  |  Status: InvestmentContract
+  async recordInvestment(investor, treeIds) {
+    if (!this.enabled) return { success: false, error: 'Blockchain service not enabled' };
+
+    try {
+      const agreementData = {
+        investorId: investor.investorId,
+        name:       investor.name,
+        email:      investor.email,
+        investment: investor.investment,
+        treeIds:    treeIds || [],
+        timestamp:  new Date().toISOString(),
+      };
+
+      const hash = crypto
+        .createHash('sha256')
+        .update(JSON.stringify(agreementData))
+        .digest('hex');
+
+      const onChainId = `INV-${investor.investorId}`;
+
+      const abi = ['function enrollTree(string,string,string) external'];
+      const contract = new ethers.Contract(this.contractAddress, abi, this.wallet);
+
+      const tx = await contract.enrollTree(onChainId, hash, 'InvestmentContract');
+      const receipt = await tx.wait();
+
+      console.log(`✅ Investment recorded on-chain: ${onChainId} | Hash: ${hash.slice(0, 16)}... | Block: ${receipt.blockNumber}`);
+
+      return {
+        success:         true,
+        hash,
+        transactionHash: receipt.hash,
+        blockNumber:     receipt.blockNumber,
+        onChainId,
+      };
+
+    } catch (err) {
+      console.error('❌ recordInvestment failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ─── FEATURE 2: Record Tree Status Change on Blockchain ─────────────────────
+  // Calls updateTreeStatus() for trees already enrolled on-chain
+  // Silently skips trees not yet verified on blockchain
+  async recordStatusChange(treeId, newStatus, blockchainStatus) {
+    if (!this.enabled) return { success: false, error: 'Blockchain service not enabled' };
+
+    if (blockchainStatus !== 'Verified') {
+      console.log(`⏭️  Skipping blockchain status update for ${treeId} — not yet enrolled`);
+      return { success: false, skipped: true, reason: 'Tree not enrolled on blockchain' };
+    }
+
+    try {
+      const abi = ['function updateTreeStatus(string,string) external'];
+      const contract = new ethers.Contract(this.contractAddress, abi, this.wallet);
+
+      const shortStatus = newStatus.length > 50 ? newStatus.substring(0, 50) : newStatus;
+
+      const tx = await contract.updateTreeStatus(treeId, shortStatus);
+      const receipt = await tx.wait();
+
+      console.log(`✅ Status updated on-chain: ${treeId} → ${shortStatus} | Block: ${receipt.blockNumber}`);
+
+      return {
+        success:         true,
+        transactionHash: receipt.hash,
+        blockNumber:     receipt.blockNumber,
+        treeId,
+        newStatus:       shortStatus,
+      };
+
+    } catch (err) {
+      console.error(`❌ recordStatusChange failed for ${treeId}:`, err.message);
+      return { success: false, error: err.message };
     }
   }
 }

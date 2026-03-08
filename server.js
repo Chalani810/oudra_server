@@ -1,7 +1,10 @@
 //server.js code:
+//server.js code:
+const dotenv = require("dotenv");
+dotenv.config();  // ← move this here, BEFORE all requires
+
 const express = require("express");
 const mongoose = require("mongoose");
-const dotenv = require("dotenv");
 const cors = require("cors");
 const path = require("path");
 
@@ -36,7 +39,6 @@ const certificateRoutes = require("./app/routes/certificateRoutes");
 const taskRoutes = require("./app/routes/taskRoutes");
 
 // Load environment variables FIRST before anything else
-dotenv.config();
 
 const app = express();
 
