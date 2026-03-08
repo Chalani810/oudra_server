@@ -11,6 +11,7 @@ const {
   addWorkflowLog,
   uploadResinImage, // This now contains the AI logic
   getLatestWorkflowLogByTreeId,
+  deleteResinAnalysis,
 
 } = require("../controllers/resin_controller");
 
@@ -45,5 +46,7 @@ router.patch("/:id/status", updateResinStatus);
 
 // Add manual log entry (POST /resin/:id/workflow-log)
 router.post("/:id/workflow-log", addWorkflowLog);
+
+router.delete('/:id', deleteResinAnalysis);
 
 module.exports = router;
