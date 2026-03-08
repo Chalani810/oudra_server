@@ -33,6 +33,7 @@ const syncRoutes = require("./app/routes/syncRoutes");
 
 
 const iotRoutes = require('./app/routes/iotRoutes');
+const sensorReportRoutes = require('./app/routes/sensorReportRoutes');
 
 // Blockchain routes
 const investorRoutes = require("./app/routes/investorRoutes");
@@ -153,6 +154,7 @@ app.use("/api/resin-notifications", resinNotificationRoutes);
 app.use('/api', treeRoutes);
 app.use('/api', syncRoutes);
 app.use('/api', iotRoutes);
+app.use('/api/reports', sensorReportRoutes);
 
 // Blockchain routes
 app.use("/api/investors", investorRoutes);
