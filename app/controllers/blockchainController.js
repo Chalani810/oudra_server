@@ -32,7 +32,6 @@ const syncTreesToPolygon = async (req, res) => {
         message: "AGARWOOD_REGISTRY_ADDRESS not set in .env",
       });
     }
-
     // ── Guard: localhost address used in production ─────────────
     if (contractAddress === "0x5FbDB2315678afecb367f032d93F642f64180aa3") {
       return res.status(500).json({
@@ -42,7 +41,6 @@ const syncTreesToPolygon = async (req, res) => {
           "Deploy to Amoy first and update AGARWOOD_REGISTRY_ADDRESS in .env.",
       });
     }
-
     const result = await enrollExistingTrees(contractAddress);
 
     const totalProcessed = result.successCount + result.skippedCount + result.failCount;

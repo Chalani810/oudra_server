@@ -72,7 +72,7 @@ const certificateSchema = new mongoose.Schema({
     blockNumber: Number,
     gasUsed: String,
     metadataURI: String,
-    network: { type: String, enum: ['mainnet', 'sepolia', 'goerli', 'localhost'], default: process.env.BLOCKCHAIN_NETWORK || 'sepolia' },
+    network: { type: String, enum: ['mainnet', 'sepolia', 'goerli', 'localhost', 'amoy'], default: process.env.BLOCKCHAIN_NETWORK || 'amoy' },
     onChain: { type: Boolean, default: false },
     isRevoked: { type: Boolean, default: false },
     revokedAt: Date,
