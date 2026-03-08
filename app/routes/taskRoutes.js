@@ -1,6 +1,6 @@
 // oudra-server/app/routes/taskRoutes.js
-
 const express = require("express");
+const router = express.Router();
 const {
   createTask,
   getAllTasks,
@@ -10,24 +10,26 @@ const {
   getTasksForEmployee,
   updateTaskStatus,
   getTaskStats,
+  createSensorTasks,
+  getSensorTasksForTree,
 } = require("../controllers/taskController");
 
-const router = express.Router();
-
-// ── Non-wildcard routes first ──────────────────────────────────────────────
-router.post("/",      createTask);
-router.get("/",       getAllTasks);
-router.get("/stats",  getTaskStats);
-
-// Mobile app: get all tasks assigned to a specific employee
-// MUST be before /:id or Express will match "employee" as an id
+// ── Standard task routes ───────────────────────────────────────────────────────
+router.post("/", createTask);
+router.get("/", getAllTasks);
+router.get("/stats", getTaskStats);
 router.get("/employee/:employeeId", getTasksForEmployee);
 
-// ── Wildcard /:id routes last ──────────────────────────────────────────────
+// ── System-generated sensor task routes ───────────────────────────────────────
+// POST /api/tasks/sensor-tasks  — called from mobile after sensor sync
+router.post("/sensor-tasks", createSensorTasks);
+// GET  /api/tasks/sensor-tasks/:treeId  — get open system tasks for a tree
+router.get("/sensor-tasks/:treeId", getSensorTasksForTree);
 
-router.get("/:id",         getTaskById);
-router.put("/:id",         updateTask);
-router.delete("/:id",      deleteTask);
-router.put("/:id/status",  updateTaskStatus);
+// ── Single task routes (keep :id last to avoid catching named routes above) ────
+router.get("/:id", getTaskById);
+router.put("/:id", updateTask);
+router.delete("/:id", deleteTask);
+router.put("/:id/status", updateTaskStatus);
 
 module.exports = router;
