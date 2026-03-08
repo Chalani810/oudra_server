@@ -1,14 +1,4 @@
 // oudra-server/app/controllers/auth_controller.js
-// CHANGES FROM GLIMMER:
-//  1. register() removed (no public self-registration in Oudra)
-//  2. login() updated: 
-//       - Accepts "platform" in request body
-//       - Validates platform vs role (fieldworkers → mobile only, manager/investor → web only)
-//       - JWT token now includes { userId, role, email, platform }
-//  3. createManagedAccount() added: Manager creates accounts for investors/fieldworkers
-//  4. requestPasswordReset() and resetPassword() kept as-is (minimal changes)
-//  5. Removed getAllUsers Glimmer logic (loyalty points / checkout checks)
-
 const User     = require("../models/User");
 const Employee = require("../models/Employee");
 const Investor = require("../models/Investor");
@@ -413,6 +403,59 @@ const toggleUserStatus = async (req, res) => {
   }
 };
 
+// Investors
+
+const updateInvestorProfile = async (req, res) => {
+  try {
+    const { newEmail, password } = req.body;
+    const userId = req.user.userId; // Provided by your authMiddleware
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Security check: Only let investors use this specific profile update if you want
+    if (user.role !== 'investor') {
+      return res.status(403).json({ message: "Unauthorized profile update." });
+    }
+
+    // 1. Update Email (Username)
+    if (newEmail) {
+      const normalizedEmail = newEmail.toLowerCase().trim();
+      
+      // Check if email is already taken by someone else
+      const emailExists = await User.findOne({ email: normalizedEmail, _id: { $ne: userId } });
+      if (emailExists) {
+        return res.status(400).json({ message: "This email is already in use." });
+      }
+
+      user.email = normalizedEmail;
+
+      // CRITICAL: Update the linked Investor record so they stay in sync
+      if (user.linkedRecordId) {
+        await Investor.findByIdAndUpdate(user.linkedRecordId, { email: normalizedEmail });
+      }
+    }
+
+    // 2. Update Password
+    if (password) {
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters." });
+      }
+      user.password = password; // Your pre-save hook will hash this automatically
+    }
+
+    await user.save();
+
+    return res.json({
+      message: "Profile updated successfully.",
+      user: { email: user.email }
+    });
+  } catch (err) {
+    console.error("updateInvestorProfile error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   login,
   createManagedAccount,
@@ -421,4 +464,5 @@ module.exports = {
   toggleUserStatus,
   requestPasswordReset,
   resetPassword,
+  updateInvestorProfile,
 };
