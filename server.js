@@ -26,6 +26,7 @@ const customerReportRoutes = require("./app/routes/customer_reportRoutes");
 // const resinDetectionRoutes = require("./app/routes/resinDetectionRoutes");
 
 const resinRoutes = require("./app/routes/resinRoutes");
+const resinNotificationRoutes = require("./app/routes/resin_notifications");
 
 const treeRoutes = require("./app/routes/treeRoutes");
 const syncRoutes = require("./app/routes/syncRoutes");
@@ -147,6 +148,7 @@ app.use("/product_report", productreportRoutes);
 app.use("/customer_report", customerReportRoutes);
 
 app.use("/resin", resinRoutes);
+app.use("/api/resin-notifications", resinNotificationRoutes);
 
 app.use('/api', treeRoutes);
 app.use('/api', syncRoutes);

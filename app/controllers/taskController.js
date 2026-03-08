@@ -494,6 +494,7 @@ const getTaskStats = async (req, res) => {
   }
 };
 
+
 module.exports = {
   createTask,
   getAllTasks,
@@ -502,5 +503,5 @@ module.exports = {
   deleteTask,
   getTasksForEmployee,
   updateTaskStatus,
-  getTaskStats
+  getTaskStats,
 };

@@ -1,6 +1,7 @@
 // controllers/resin_controller.js
 const Resin = require("../models/Resin");
 const Tree = require("../models/TreeModel");
+const ResinNotification = require("../models/ResinNotification");
 const axios = require("axios");
 const FormData = require("form-data");
 const mongoose = require("mongoose");
@@ -154,9 +155,14 @@ const addWorkflowLog = async (req, res) => {
 // Get all records
 const getAllResinAnalysis = async (req, res) => {
   try {
+   console.log("lllllll");
+   
     const records = await Resin.find()
       .populate("treeId")
       .sort({ timestamp: -1 });
+
+      console.log("jgfyitfyuggi");
+      
 
     res.status(200).json({ data: records });
   } catch (err) {
@@ -384,6 +390,34 @@ const uploadResinImage = async (req, res) => {
     };
     record.riskLevel = riskMapping[grade] || "Pending";
 
+    // Map AI grade to DB status AND trigger the Resin Notification
+    if (grade === "high_resin") {
+      record.status = "Ready";
+      
+      // --- TRIGGER RESIN NOTIFICATION ---
+      try {
+        const newNotification = new ResinNotification({
+          title: "High Resin Detected - Ready for Harvest",
+          message: `Tree ${searchId} has reached harvest readiness.`,
+          type: "HARVEST_READY",
+          treeId: record.treeId,
+          resinScore: record.resinScore, // Pass the exact score
+          riskLevel: record.riskLevel    // Pass the risk level
+        });
+        await newNotification.save();
+        
+        console.log(`✅ Resin notification saved for Tree: ${searchId}`);
+      } catch (notifErr) {
+        console.error("❌ Failed to save resin notification:", notifErr);
+      }
+      // ----------------------------------
+
+    } else if (grade === "medium_resin") {
+      record.status = "Medium";
+    } else {
+      record.status = "Not Ready";
+    }
+
     // 5. Add to Workflow Log
     record.workflowLog.push({
       action: "AI Analysis Completed",
@@ -412,6 +446,35 @@ const uploadResinImage = async (req, res) => {
   }
 };
 
+// Delete Resin Analysis Record
+const deleteResinAnalysis = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find the record by ID and delete it
+    const deletedRecord = await Resin.findByIdAndDelete(id);
+
+    if (!deletedRecord) {
+      return res.status(404).json({ message: "Resin analysis record not found" });
+    }
+
+    console.log(`✅ Successfully deleted resin record: ${id}`);
+    
+    res.status(200).json({ 
+      success: true, 
+      message: "Record deleted successfully",
+      data: deletedRecord 
+    });
+  } catch (err) {
+    console.error("Error in deleteResinAnalysis:", err);
+    res.status(500).json({ 
+      success: false, 
+      error: "Server error while deleting record",
+      details: err.message 
+    });
+  }
+};
+
 module.exports = {
   addResinAnalysis,
   getAllResinAnalysis,
@@ -421,4 +484,5 @@ module.exports = {
   addWorkflowLog,
   uploadResinImage,
   getLatestWorkflowLogByTreeId,
+  deleteResinAnalysis,
 };

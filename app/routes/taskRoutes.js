@@ -9,7 +9,7 @@ const {
   deleteTask,
   getTasksForEmployee,
   updateTaskStatus,
-  getTaskStats,
+  getTaskStats
 } = require("../controllers/taskController");
 
 const router = express.Router();

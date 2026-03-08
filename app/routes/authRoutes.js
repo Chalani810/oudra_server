@@ -17,6 +17,7 @@ const {
   toggleUserStatus,
   requestPasswordReset,
   resetPassword,
+  updateInvestorProfile,
 } = require("../controllers/auth_controller");
 
 const authMiddleware = require("../middleware/authMiddleware");
@@ -51,6 +52,7 @@ router.use(authMiddleware);
 
 // Get current logged-in user profile
 router.get("/me", getCurrentUser);
+router.put("/update-profile", updateInvestorProfile);
 
 // Create a login account for an investor or field worker
 // Only managers (web) can do this
@@ -76,5 +78,7 @@ router.patch(
   roleMiddleware("manager"),
   toggleUserStatus
 );
+
+
 
 module.exports = router;
