@@ -1,58 +1,13 @@
-const Tree              = require('../models/TreeModel');
-const AutoIncrementTreeIdCount = require('../models/AutoIncrementTreeIdCount');
-const Observation       = require('../models/Observations');
-const TreeHistory       = require('../models/TreeHistory');
-const blockchainService = require('../services/blockchain.service');
 
-// Helper to get next sequence number for treeId
-async function getNextTreeSequence() {
-  try {
-    const existingTrees = await Tree.find({}, 'treeId').sort({ treeId: 1 }).lean();
-    const existingIds = existingTrees.map(tree => {
-      const num = parseInt(tree.treeId.replace('T-', ''));
-      return isNaN(num) ? 0 : num;
-    }).filter(num => num > 0).sort((a, b) => a - b);
+const Tree = require('../models/TreeModel');
+const Observation = require('../models/Observations');
+const TreeHistory = require('../models/TreeHistory');
 
-    let nextId = 1;
-    for (let i = 0; i < existingIds.length; i++) {
-      if (existingIds[i] !== i + 1) {
-        nextId = i + 1;
-        break;
-      }
-      nextId = existingIds[i] + 1;
-    }
+const { getNextAvailableNumber, buildTreeId } = require('./autoIncrementController');
 
-    const currentCounter = await AutoIncrementTreeIdCount.findOne({ _id: 'tree' });
-
-    if (!currentCounter || currentCounter.seq < nextId) {
-      const updatedCounter = await AutoIncrementTreeIdCount.findOneAndUpdate(
-        { _id: 'tree' },
-        { seq: nextId + 1 },
-        { new: true, upsert: true }
-      );
-      return nextId;
-    }
-
-    const doc = await AutoIncrementTreeIdCount.findOneAndUpdate(
-      { _id: 'tree' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true }
-    );
-    return doc.seq - 1;
-    
-  } catch (error) {
-    console.error('Error in getNextTreeSequence:', error);
-    const doc = await AutoIncrementTreeIdCount.findOneAndUpdate(
-      { _id: 'tree' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true }
-    );
-    return doc.seq;
-  }
-}
-
-function formatTreeId(seq) {
-  return `T-${String(seq).padStart(6, '0')}`;
+async function getNextTreeId(block) {
+  const num = await getNextAvailableNumber();
+  return buildTreeId(block, num);
 }
 
 function calculateTreeAge(plantedDate) {
@@ -233,7 +188,15 @@ exports.getAllTrees = async (req, res) => {
     if (req.query.includeArchived !== 'true') filter.isArchived = { $ne: true };
 
     const trees = await Tree.find(filter).lean().exec();
-    return res.json(trees);
+
+    // Recalculate lifecycle for each tree before returning
+    // (DB value may be stale for trees that aged into a new lifecycle stage)
+    const treesWithCorrectLifecycle = trees.map(tree => ({
+      ...tree,
+      lifecycleStatus: determineLifecycleStatus(tree),
+    }));
+
+    return res.json(treesWithCorrectLifecycle);
   } catch (err) {
     console.error('getAllTrees error:', err);
     return res.status(500).json({ message: err.message });
@@ -363,7 +326,13 @@ exports.updateTreeProfile = async (req, res) => {
 exports.mobileUpdateTreeProfile = async (req, res) => {
   try {
     const { treeId } = req.params;
-    const { healthStatus, inoculationCount, block, lastUpdatedBy } = req.body;
+    const { 
+    healthStatus, 
+    inoculationCount,
+    lifecycleStatus, 
+    block,
+    lastUpdatedBy
+  } = req.body;
 
     const tree = await Tree.findOne({ treeId }).exec();
     if (!tree) return res.status(404).json({ message: 'Tree not found' });
@@ -383,13 +352,45 @@ exports.mobileUpdateTreeProfile = async (req, res) => {
       updatedAt: new Date()
     };
 
-    if (healthStatus !== undefined)    updates.healthStatus    = healthStatus;
-    if (inoculationCount !== undefined) updates.inoculationCount = parseInt(inoculationCount);
-    if (block !== undefined)           updates.block           = block;
+    // Update allowed fields if provided
+      if (healthStatus !== undefined) updates.healthStatus = healthStatus;
+      if (inoculationCount !== undefined) updates.inoculationCount = parseInt(inoculationCount);
+      if (block !== undefined) updates.block = block;
 
-    const newTreeData = { ...tree.toObject(), ...updates };
-    const calculatedLifecycle = determineLifecycleStatus(newTreeData);
-    updates.lifecycleStatus = calculatedLifecycle;
+      // If lifecycleStatus is explicitly set to 'Harvested', honour it directly
+      // and skip auto-calculation so it cannot be overwritten
+      if (lifecycleStatus === 'Harvested') {
+        updates.lifecycleStatus = 'Harvested';
+        updates.readyForInoculation = false;
+        updates.readyForHarvest = false;
+
+        // Add to history and save immediately
+        Object.assign(tree, updates);
+        await tree.save();
+
+        const history = new TreeHistory({
+          treeId,
+          actionType: 'ManualEdit',
+          oldValue: { lifecycleStatus: tree.lifecycleStatus },
+          newValue: { lifecycleStatus: 'Harvested' },
+          changedBy: buildDisplayName(req.user) || lastUpdatedBy || 'field-worker',
+          notes: 'Tree marked as harvested via mobile app',
+          timestamp: new Date(),
+          device: 'mobile'
+        });
+        await history.save();
+
+        return res.json({
+          ...tree.toObject(),
+          calculatedLifecycleStatus: 'Harvested',
+          calculatedAge: calculateTreeAge(tree.plantedDate)
+        });
+      }
+
+      // For all other updates, auto-calculate lifecycle status
+      const newTreeData = { ...tree.toObject(), ...updates };
+      const calculatedLifecycle = determineLifecycleStatus(newTreeData);
+      updates.lifecycleStatus = calculatedLifecycle;
 
     const age = calculateTreeAge(tree.plantedDate);
     const newInoculationCount = inoculationCount !== undefined ? parseInt(inoculationCount) : tree.inoculationCount;
@@ -946,6 +947,38 @@ exports.getAllTreeHistory = async (req, res) => {
     const history = await TreeHistory.find(filter).sort({ timestamp: -1 }).lean().exec();
     return res.json(history);
   } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// Get tree by NFC tag content (the treeId written on the card, e.g. "TB-000023")
+exports.getTreeByNFCTag = async (req, res) => {
+  try {
+    const { nfcTagId } = req.params;
+    
+    // First try: the card stores the treeId directly (e.g. "TB-000023")
+    let tree = await Tree.findOne({ treeId: nfcTagId }).lean().exec();
+    
+    // Second try: the card stores the nfcTagId field value
+    if (!tree) {
+      tree = await Tree.findOne({ nfcTagId: nfcTagId }).lean().exec();
+    }
+    
+    if (!tree) {
+      return res.status(404).json({ 
+        message: `No tree found for NFC tag: ${nfcTagId}` 
+      });
+    }
+    
+    // Return tree with calculated fields
+    const ageData = calculateTreeAge(tree.plantedDate);
+    return res.json({
+      ...tree,
+      calculatedAge: ageData,
+      calculatedLifecycleStatus: determineLifecycleStatus(tree)
+    });
+  } catch (err) {
+    console.error('getTreeByNFCTag error:', err);
     return res.status(500).json({ message: err.message });
   }
 };

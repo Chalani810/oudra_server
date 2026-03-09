@@ -1,7 +1,7 @@
 const axios = require('axios');
 const SensorData = require('../models/SensorData');
 
-const ESP32_IP = 'http://10.128.240.52'; 
+const ESP32_IP = 'http://192.168.8.116'; 
 
 const calculateStatus = (ph, temp, moisture, humidity) => {
     // 1. Check CRITICAL conditions

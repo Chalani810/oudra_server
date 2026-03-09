@@ -26,9 +26,12 @@ const reportRoutes = require("./app/routes/reportRoutes");
 const productreportRoutes = require("./app/routes/productreportRoutes");
 const customerReportRoutes = require("./app/routes/customer_reportRoutes");
 const resinRoutes = require("./app/routes/resinRoutes");
+const resinNotificationRoutes = require("./app/routes/resin_notifications");
+
 const treeRoutes = require("./app/routes/treeRoutes");
 const syncRoutes = require("./app/routes/syncRoutes");
 const iotRoutes = require('./app/routes/iotRoutes');
+const sensorReportRoutes = require('./app/routes/sensorReportRoutes');
 
 // Blockchain routes
 const investorRoutes = require("./app/routes/investorRoutes");
@@ -47,8 +50,9 @@ app.use(cors({
   origin: "*",
   credentials: true
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // ✅ FIXED: Now correctly reads MONGO_URI from your .env
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
@@ -139,10 +143,12 @@ app.use("/order_report", order_reportRoutes);
 app.use("/product_report", productreportRoutes);
 app.use("/customer_report", customerReportRoutes);
 app.use("/resin", resinRoutes);
+app.use("/api/resin-notifications", resinNotificationRoutes);
 
 app.use('/api', treeRoutes);
 app.use('/api', syncRoutes);
 app.use('/api', iotRoutes);
+app.use('/api/reports', sensorReportRoutes);
 
 // Blockchain routes
 app.use("/api/investors", investorRoutes);
@@ -174,8 +180,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-// Start server
-const server = app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`\n🚀 Server running on http://localhost:${PORT}`);
 });
 

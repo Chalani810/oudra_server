@@ -34,7 +34,8 @@ const TreeSchema = new mongoose.Schema({
     type: String,
     enum: [
       'Growing','Ready for 1st Inoculation','Inoculated Once',
-      'Ready for 2nd Inoculation','Inoculated Twice','Ready for Harvest','Harvested'
+      'Ready for 2nd Inoculation','Inoculated Twice','Ready for Harvest','Harvested', 'Dead - Lifecycle Stopped'
+
     ],
     default: 'Growing'
   },

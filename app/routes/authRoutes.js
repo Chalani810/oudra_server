@@ -18,6 +18,7 @@ const {
   toggleUserStatus,
   requestPasswordReset,
   resetPassword,
+  updateInvestorProfile,
 } = require("../controllers/auth_controller");
 
 const authMiddleware = require("../middleware/authMiddleware");
@@ -52,6 +53,7 @@ router.use(authMiddleware);
 
 // Get current logged-in user profile
 router.get("/me", getCurrentUser);
+router.put("/update-profile", updateInvestorProfile);
 
 // ✅ NEW: Change password (investor & employee)
 router.post("/change-password", changePassword);
@@ -80,5 +82,7 @@ router.patch(
   roleMiddleware("manager"),
   toggleUserStatus
 );
+
+
 
 module.exports = router;
