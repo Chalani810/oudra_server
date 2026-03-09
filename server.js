@@ -180,8 +180,8 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`\n🚀 Server running on http://localhost:${PORT}`);
+const server = app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });
 
 server.timeout = 900000; // 15 minutes — prevents Express cutting long Polygon sync requests
