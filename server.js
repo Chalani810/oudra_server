@@ -1,7 +1,10 @@
 //server.js code:
+//server.js code:
+const dotenv = require("dotenv");
+dotenv.config();  // ← move this here, BEFORE all requires
+
 const express = require("express");
 const mongoose = require("mongoose");
-const dotenv = require("dotenv");
 const cors = require("cors");
 const path = require("path");
 
@@ -22,16 +25,11 @@ const orderRoutes = require("./app/routes/orderRoutes");
 const reportRoutes = require("./app/routes/reportRoutes");
 const productreportRoutes = require("./app/routes/productreportRoutes");
 const customerReportRoutes = require("./app/routes/customer_reportRoutes");
-
-// const resinDetectionRoutes = require("./app/routes/resinDetectionRoutes");
-
 const resinRoutes = require("./app/routes/resinRoutes");
 const resinNotificationRoutes = require("./app/routes/resin_notifications");
 
 const treeRoutes = require("./app/routes/treeRoutes");
 const syncRoutes = require("./app/routes/syncRoutes");
-
-
 const iotRoutes = require('./app/routes/iotRoutes');
 const sensorReportRoutes = require('./app/routes/sensorReportRoutes');
 
@@ -40,11 +38,10 @@ const investorRoutes = require("./app/routes/investorRoutes");
 const blockchainRoutes = require("./app/routes/blockchainRoutes");
 const certificateRoutes = require("./app/routes/certificateRoutes");
 
-//Task Management routes
+// Task Management routes
 const taskRoutes = require("./app/routes/taskRoutes");
 
-// Load environment variables
-dotenv.config();
+// Load environment variables FIRST before anything else
 
 const app = express();
 
@@ -57,16 +54,19 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// MongoDB connection
-const MONGO_URI =
-  process.env.MONGO_URI || "mongodb://localhost:27017/blockchain-investors";
+// ✅ FIXED: Now correctly reads MONGO_URI from your .env
+const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 const PORT = process.env.PORT || 5000;
 
+if (!MONGO_URI) {
+  console.error("❌ FATAL: No MongoDB URI found. Set MONGO_URI in your .env file.");
+  process.exit(1);
+}
+
+console.log(`🔗 Connecting to MongoDB...`);
+
 mongoose
-  .connect(MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
+  .connect(MONGO_URI)
   .then(() => {
     console.log("✅ MongoDB Connected Successfully");
     console.log(`📁 Database: ${mongoose.connection.name}`);
@@ -99,28 +99,23 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// Adding a debug endpoint
+// Debug endpoints
 app.get("/api/debug", (req, res) => {
   res.json({
     message: "Debug endpoint",
     routes: {
       trees: "/api/trees",
-      tasks: "/api/tasks (should exist)",
-      employees: "/employee (should exist)",
-      api_tasks: "Mounted at /api/tasks?",
-      tasks_direct: "Mounted at /tasks?"
+      tasks: "/api/tasks",
+      employees: "/employee",
     }
   });
 });
 
 app.get("/debug", (req, res) => {
-  res.json({
-    message: "Root debug endpoint",
-    currentTaskRoute: "Check if /tasks exists"
-  });
+  res.json({ message: "Root debug endpoint" });
 });
 
-// Adding request logging middleware
+// Request logging middleware
 app.use((req, res, next) => {
   console.log(`📨 ${new Date().toISOString()} ${req.method} ${req.url}`);
   next();
@@ -129,7 +124,7 @@ app.use((req, res, next) => {
 // Static files
 app.use("/uploads", express.static(path.join(__dirname, "app/uploads")));
 
-// ===== ALL ROUTES ARE DEFINED HERE =====
+// ===== ALL ROUTES =====
 
 app.use("/auth", authRoutes);
 app.use("/event", evenRoutes);
@@ -147,7 +142,6 @@ app.use("/reports", reportRoutes);
 app.use("/order_report", order_reportRoutes);
 app.use("/product_report", productreportRoutes);
 app.use("/customer_report", customerReportRoutes);
-
 app.use("/resin", resinRoutes);
 app.use("/api/resin-notifications", resinNotificationRoutes);
 
@@ -167,6 +161,7 @@ app.use("/employee", employeeRoutes);
 // Task routes
 app.use("/api/tasks", taskRoutes);
 
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -174,7 +169,7 @@ app.use((req, res) => {
   });
 });
 
-// ===== GLOBAL ERROR HANDLER - MUST BE LAST =====
+// Global error handler
 app.use((err, req, res, next) => {
   console.error("❌ Error:", err.stack);
   res.status(err.status || 500).json({
@@ -187,8 +182,9 @@ app.use((err, req, res, next) => {
 // Start server
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`\n🚀 Server running on http://localhost:${PORT}`);
-
 });
+
+server.timeout = 900000; // 15 minutes — prevents Express cutting long Polygon sync requests
 
 // Graceful shutdown
 process.on("SIGTERM", () => {

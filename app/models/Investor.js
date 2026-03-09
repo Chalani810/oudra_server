@@ -88,9 +88,6 @@ const InvestorSchema = new mongoose.Schema({
     required: true
   },
 
-  // ===============================
-  // ✅ FIX #3: INVESTMENT AS SIMPLE NUMBER
-  // ===============================
   investment: {
     type: Number,
     default: 0,
@@ -111,7 +108,24 @@ const InvestorSchema = new mongoose.Schema({
     type: String,
     enum: ['active', 'inactive'],
     default: 'active'
+  },
+
+  // ===============================
+  // BLOCKCHAIN FIELDS
+  // ===============================
+  blockchainTxHash: {
+    type: String,
+    default: null
+  },
+  blockchainHash: {
+    type: String,
+    default: null
+  },
+  blockchainRecorded: {
+    type: Boolean,
+    default: false
   }
+
 }, { timestamps: true });
 
 /* ======================================
@@ -148,12 +162,7 @@ InvestorSchema.methods.addTree = async function (tree) {
   if (exists) {
     throw new Error('Tree already added to investor');
   }
-
-  this.investedTrees.push({
-    tree: tree._id,
-    treeId: tree.treeId
-  });
-
+  this.investedTrees.push({ tree: tree._id, treeId: tree.treeId });
   await this.save();
 };
 
@@ -172,21 +181,18 @@ InvestorSchema.methods.addCertificate = async function (certificate, treeCount, 
   const exists = this.certificates.find(
     c => c.certificate.toString() === certificate._id.toString()
   );
-  
-  if (exists) {
-    throw new Error('Certificate already added to investor');
-  }
+  if (exists) throw new Error('Certificate already added to investor');
 
   this.certificates.push({
-    certificate: certificate._id,
-    certificateId: certificate.certificateId,
+    certificate:       certificate._id,
+    certificateId:     certificate.certificateId,
     certificateNumber: certificate.certificateNumber,
-    type: certificate.type,
-    issuedDate: certificate.issueDate,
-    treeCount: treeCount || 0,
-    totalResinYield: totalResinYield || 0,
-    blockchainTxHash: certificate.blockchain?.transactionHash,
-    status: certificate.status
+    type:              certificate.type,
+    issuedDate:        certificate.issueDate,
+    treeCount:         treeCount || 0,
+    totalResinYield:   totalResinYield || 0,
+    blockchainTxHash:  certificate.blockchain?.transactionHash,
+    status:            certificate.status
   });
 
   await this.save();

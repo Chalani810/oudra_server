@@ -38,6 +38,9 @@ const userSchema = new mongoose.Schema(
 
     isActive: { type: Boolean, default: true },
 
+        // ✅ NEW: Forces investor/fieldworker to change their temp password on first login
+    mustChangePassword: { type: Boolean, default: false },
+
     // Links this auth user to the investors OR employees collection
     linkedRecordId: {
       type: mongoose.Schema.Types.ObjectId,

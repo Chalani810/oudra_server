@@ -19,8 +19,12 @@ const createTransporter = () =>
     service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
+      pass: process.env.EMAIL_PASS, // Ensure this is your 16-character App Password
     },
+    // ADD THIS BLOCK TO FIX THE ESOCKET / SELF-SIGNED CERT ERROR
+    tls: {
+      rejectUnauthorized: false
+    }
   });
 
 // ─── 1. LOGIN ─────────────────────────────────────────────────────────────────
@@ -77,6 +81,10 @@ const login = async (req, res) => {
         message: "Managers and investors must log in via the web app.",
       });
     }
+    let investorDbId = null;
+    if (user.role === "investor" && user.linkedRecordId) {
+      investorDbId = user.linkedRecordId;
+    }
 
     // ── Sign JWT ──────────────────────────────────────────────────
     const token = jwt.sign(
@@ -87,6 +95,7 @@ const login = async (req, res) => {
         platform:  platform,
         firstName: user.firstName,
         lastName:  user.lastName,
+        investorDbId: investorDbId,
       },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
@@ -101,6 +110,7 @@ const login = async (req, res) => {
         email:          user.email,
         role:           user.role,
         linkedRecordId: user.linkedRecordId,
+        investorDbId:   investorDbId,
         photoUrl: user.profilePicture
           ? `${req.protocol}://${req.get("host")}/uploads/${user.profilePicture}`
           : null,
@@ -169,34 +179,39 @@ const createManagedAccount = async (req, res) => {
       role,
       linkedRecordId: linkedRecord._id,
       isActive:       true,
+      mustChangePassword: false, 
     });
 
     await newUser.save();
 
     // ── Send credentials email (non-critical — account is created regardless) ─
-    try {
-      const platformText = role === "fieldworker" ? "mobile app" : "web app";
-      const transporter  = createTransporter();
+try {
+  const platformText = role === "fieldworker" ? "mobile app" : "web portal";
+  const loginUrl = role === "fieldworker"
+    ? (process.env.MOBILE_APP_SCHEME || process.env.CLIENT_URL)
+    : `${process.env.CLIENT_URL}/investor/login`;
+  
+  const transporter = createTransporter();
 
-      await transporter.sendMail({
-        to:      newUser.email,
-        from:    process.env.EMAIL_FROM,
-        subject: "Your Oudra Login Credentials",
-        html: `
-          <p>Dear ${linkedRecord.name},</p>
-          <p>Your login account has been created for the Oudra ${platformText}.</p>
-          <p><strong>Email:</strong> ${newUser.email}</p>
-          <p><strong>Temporary Password:</strong> ${tempPassword}</p>
-          <p>Please log in and change your password using the 
-          <strong>Forgot Password</strong> option.</p>
-          <p>— Oudra Management Team</p>
-        `,
-      });
-      console.log(`✅ Credentials email sent to ${newUser.email}`);
-    } catch (emailErr) {
-      // Email failed but account was created successfully — log and continue
-      console.warn(`⚠️ Email failed (account still created):`, emailErr.message);
-    }
+  await transporter.sendMail({
+    to:      newUser.email,
+    from:    process.env.EMAIL_FROM,
+    subject: "Your Oudra Login Credentials",
+    html: `
+      <p>Dear ${linkedRecord.name},</p>
+      <p>Your login account has been created for the Oudra ${platformText}.</p>
+      <p><strong>Email:</strong> ${newUser.email}</p>
+      <p><strong>Temporary Password:</strong> ${tempPassword}</p>
+      <p>Please log in here: <a href="${loginUrl}">${loginUrl}</a></p>
+      <p>After logging in, please change your password via the 
+      <strong>Forgot Password</strong> option.</p>
+      <p>— Oudra Management Team</p>
+    `,
+  });
+  console.log(`✅ Credentials email sent to ${newUser.email}`);
+} catch (emailErr) {
+  console.error(`⚠️ Email failed (account still created):`, emailErr); // Full error object
+}
 
     // ── Return success with credentials ──────────────────────────────────────
     return res.status(201).json({
@@ -224,6 +239,38 @@ const getCurrentUser = async (req, res) => {
   }
 };
 
+// ✅ NEW: For investors and employees to change their own password
+// Body: { currentPassword, newPassword }
+const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: "Current and new password are required." });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: "New password must be at least 6 characters." });
+    }
+
+    const user = await User.findById(req.user.userId);
+    if (!user) return res.status(404).json({ message: "User not found." });
+
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Current password is incorrect." });
+    }
+
+    user.password = newPassword; // pre-save hook hashes it
+    user.mustChangePassword = false;       // ✅ NEW: clear the forced-change flag
+    await user.save();
+
+    return res.json({ success: true, message: "Password changed successfully." });
+  } catch (err) {
+    console.error("changePassword error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+};
 // ─── 4. FORGOT PASSWORD ──────────────────────────────────────────────────────
 // Sends a reset link to the user's registered email
 // Works for all roles (manager resets via web, fieldworker via mobile deep link)
@@ -326,6 +373,7 @@ const resetPassword = async (req, res) => {
     user.password             = password; // pre-save hook hashes it
     user.resetPasswordToken   = undefined;
     user.resetPasswordExpires = undefined;
+    user.mustChangePassword   = false;    // ✅ also clear flag if reset via email link
     await user.save();
 
     // Confirmation email
@@ -460,6 +508,7 @@ module.exports = {
   login,
   createManagedAccount,
   getCurrentUser,
+  changePassword,
   getAllUsers,
   toggleUserStatus,
   requestPasswordReset,

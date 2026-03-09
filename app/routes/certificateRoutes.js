@@ -1,25 +1,30 @@
-const express = require('express');
-const router = express.Router();
-const certificateController = require('../controllers/certificateController');
+// path: oudra-server/app/routes/certificateRoutes.js
+const express    = require("express");
+const router     = express.Router();
+const ctrl       = require("../controllers/certificateController");
 
-router.get(
-  '/harvestable/:investorId',
-  certificateController.getHarvestableTreesByInvestor
-);
+// ── Investor & Admin shared ───────────────────────────────────────────────────
 
-router.post(
-  '/generate-harvest',
-  certificateController.generateHarvestCertificate
-);
+// GET /api/certificates/harvest/:investorId
+// → Generates PDF and streams it — called by investor dashboard + admin panel
+router.get("/harvest/:investorId", ctrl.downloadHarvestCertificate);
 
-router.get(
-  "/harvest/:certificateId",
-  certificateController.getHarvestCertificate
-);
+// GET /api/certificates/harvestable/:investorId
+// → Returns list of verified trees for an investor
+router.get("/harvestable/:investorId", ctrl.getHarvestableTreesByInvestor);
 
-router.get(
-  '/investor/:investorId',
-  certificateController.getInvestorCertificates
-);
+// GET /api/certificates/investor/:investorId
+// → Returns certificate metadata for an investor
+router.get("/investor/:investorId", ctrl.getInvestorCertificates);
+
+// ── Admin only ────────────────────────────────────────────────────────────────
+
+// GET /api/certificates/all
+// → Returns all certificates (admin overview)
+router.get("/all", ctrl.getAllCertificates);
+
+// GET /api/certificates/stats
+// → Returns certificate stats (admin dashboard)
+router.get("/stats", ctrl.getCertificateStats);
 
 module.exports = router;
