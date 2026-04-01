@@ -342,7 +342,7 @@ const uploadResinImage = async (req, res) => {
 
     let aiResponse;
     try {
-      aiResponse = await axios.post("http://127.0.0.1:5001/predict", formData, {
+      aiResponse = await axios.post("https://oudra-ai-api-axh3c2bje9bjg7b0.malaysiawest-01.azurewebsites.net/predict", formData, {
         headers: { ...formData.getHeaders() },
         timeout: 20000,
       });
