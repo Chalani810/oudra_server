@@ -1,7 +1,8 @@
+const IotRawData = require('../models/IotRawData');
 const axios = require('axios');
 const SensorData = require('../models/SensorData');
 
-const ESP32_IP = 'http://192.168.8.116'; 
+const ESP32_IP = 'http://10.182.87.52'; 
 
 const calculateStatus = (ph, temp, moisture, humidity) => {
     // 1. Check CRITICAL conditions
@@ -29,13 +30,36 @@ const calculateStatus = (ph, temp, moisture, humidity) => {
 };
 
 const iotController = {
+
+    async receiveIotData(req, res) {
+        try {
+            const { temperature, humidity, soil_moisture, soil_raw } = req.body;
+
+            // Upsert: Updates the existing document, or creates it if it doesn't exist
+            const updatedData = await IotRawData.findOneAndUpdate(
+                { deviceId: 'ESP32_MAIN' }, 
+                { temperature, humidity, soil_moisture, soil_raw, lastUpdated: new Date() },
+                { upsert: true, new: true } 
+            );
+
+            res.status(200).json({ success: true, message: "IoT state updated" });
+        } catch (error) {
+            console.error("Error updating IoT data:", error);
+            res.status(500).json({ success: false, error: "Failed to update state" });
+        }
+    },
+    
     async syncData(req, res) {
         try {
             const { treeId } = req.params;
             const { manualPh } = req.body; 
 
-            const response = await axios.get(`${ESP32_IP}/data`, { timeout: 8000 });
-            const iot = response.data;
+            // Get the latest data posted by the ESP32
+            const iot = await IotRawData.findOne({ deviceId: 'ESP32_MAIN' });
+
+            if (!iot) {
+                return res.status(404).json({ success: false, error: "No IoT data available yet. Is the ESP32 online?" });
+            }
 
             // Use 0 as default if no pH provided
             const currentPh = manualPh || 0; 
@@ -50,12 +74,10 @@ const iotController = {
                 overallStatus: status
             });
 
-            console.log(newReading);
-
             const savedData = await newReading.save();
             res.status(200).json({ success: true, data: savedData });
         } catch (error) {
-            res.status(500).json({ success: false, error: "IoT Device Offline" });
+            res.status(500).json({ success: false, error: error.message });
         }
     },
 
@@ -78,5 +100,6 @@ const iotController = {
         }
     }
 };
+
 
 module.exports = iotController;
