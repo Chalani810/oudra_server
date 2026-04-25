@@ -335,14 +335,14 @@ const uploadResinImage = async (req, res) => {
 
     // 3. Prepare AI Request
     const formData = new FormData();
-    formData.append("image", imageFile.buffer, {
+    formData.append("file", imageFile.buffer, {
       filename: imageFile.originalname,
       contentType: imageFile.mimetype,
     });
 
     let aiResponse;
     try {
-      aiResponse = await axios.post("https://oudra-ai-api-axh3c2bje9bjg7b0.malaysiawest-01.azurewebsites.net/predict", formData, {
+      aiResponse = await axios.post("https://chalani810-resin-analyze.hf.space/analyze-wood", formData, {
         headers: { ...formData.getHeaders() },
         timeout: 20000,
       });
