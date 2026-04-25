@@ -155,19 +155,27 @@ const addWorkflowLog = async (req, res) => {
 // Get all records
 const getAllResinAnalysis = async (req, res) => {
   try {
-   console.log("lllllll");
-   
+    // .lean() is key here: it strips Mongoose internal overhead
+    // while keeping every single field in your document.
     const records = await Resin.find()
       .populate("treeId")
-      .sort({ timestamp: -1 });
+      .sort({ timestamp: -1 })
+      .lean(); 
 
-      console.log("jgfyitfyuggi");
-      
-
-    res.status(200).json({ data: records });
+    res.status(200).json({ 
+      success: true,
+      count: records.length,
+      data: records 
+    });
   } catch (err) {
     console.error("Error in getAllResinAnalysis:", err);
-    res.status(500).json({ error: err.message });
+    
+    // If the index isn't created yet, the error will persist.
+    // This fallback helps identify if the memory limit is still the culprit.
+    res.status(500).json({ 
+      error: "Query failed. Ensure an index on 'timestamp' exists.",
+      details: err.message 
+    });
   }
 };
 
