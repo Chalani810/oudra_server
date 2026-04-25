@@ -283,7 +283,6 @@ const getLatestWorkflowLogByTreeId = async (req, res) => {
 };
 
 const uploadResinImage = async (req, res) => {
-
   console.log("Received image upload request for resin analysis");
   try {
     const searchId = req.body.recordId || req.body.treeId;
@@ -347,13 +346,24 @@ const uploadResinImage = async (req, res) => {
         timeout: 20000,
       });
       console.log("✅ AI Server responded successfully");
+      
+      if (aiResponse.data.status === "REJECTED") {
+        console.warn(`⚠️ Gatekeeper Rejected Image: ${aiResponse.data.message}`);
+        return res.status(400).json({
+          error: "Image Verification Failed",
+          message: aiResponse.data.message,
+          gatekeeper_verdict: aiResponse.data.gatekeeper_verdict,
+          confidence: aiResponse.data.confidence
+        });
+      }
+
     } catch (aiError) {
       if (aiError.response) {
         console.error("AI Server Data:", aiError.response.data);
         return res.status(aiError.response.status).json({
           error: "AI Processing Failed",
           details:
-            aiError.response.data.message ||
+            aiError.response.data.detail || // FastAPI uses 'detail' for HTTPExceptions
             "The AI model could not process this image.",
         });
       } else if (aiError.request) {
@@ -370,30 +380,29 @@ const uploadResinImage = async (req, res) => {
     }
 
     // 4. Update the record with AI results
-    const { grade, confidence } = aiResponse.data;
+    // 🚨 NEW: Extract from the 'resin_analysis' object
+    const { grade, confidence } = aiResponse.data.resin_analysis;
 
     record.originalImageUrl = `data:${
       imageFile.mimetype
     };base64,${imageFile.buffer.toString("base64")}`;
     record.resinScore = parseFloat(confidence);
 
-    // Map AI grade to DB status
-    if (grade === "high_resin") record.status = "Ready";
-    else if (grade === "medium_resin") record.status = "Medium";
+    // 🚨 NEW: Map AI grade to DB status matching Python's .title() output
+    if (grade === "High Resin") record.status = "Ready";
+    else if (grade === "Medium Resin") record.status = "Medium";
     else record.status = "Not Ready";
 
-    // Update riskLevel based on grade (Optional logic based on your mapping)
+    // Update riskLevel based on grade
     const riskMapping = {
-      high_resin: "Low",
-      medium_resin: "Moderate",
-      no_resin: "High",
+      "High Resin": "Low",
+      "Medium Resin": "Moderate",
+      "No Resin": "High",
     };
     record.riskLevel = riskMapping[grade] || "Pending";
 
-    // Map AI grade to DB status AND trigger the Resin Notification
-    if (grade === "high_resin") {
-      record.status = "Ready";
-      
+    // Trigger the Resin Notification
+    if (grade === "High Resin") {
       // --- TRIGGER RESIN NOTIFICATION ---
       try {
         const newNotification = new ResinNotification({
@@ -401,8 +410,8 @@ const uploadResinImage = async (req, res) => {
           message: `Tree ${searchId} has reached harvest readiness.`,
           type: "HARVEST_READY",
           treeId: record.treeId,
-          resinScore: record.resinScore, // Pass the exact score
-          riskLevel: record.riskLevel    // Pass the risk level
+          resinScore: record.resinScore, 
+          riskLevel: record.riskLevel  
         });
         await newNotification.save();
         
@@ -411,11 +420,6 @@ const uploadResinImage = async (req, res) => {
         console.error("❌ Failed to save resin notification:", notifErr);
       }
       // ----------------------------------
-
-    } else if (grade === "medium_resin") {
-      record.status = "Medium";
-    } else {
-      record.status = "Not Ready";
     }
 
     // 5. Add to Workflow Log
